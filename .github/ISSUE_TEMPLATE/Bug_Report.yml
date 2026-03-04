@@ -34,10 +34,10 @@ body:
     validations:
       required: true
   - type: input
-    id: firebase
+    id: firestore
     attributes:
-      label: Firebase Provider Version
-      description: Which Firebase Provider version are you using?
+      label: Firestore Provider Version
+      description: Which Firestore Provider version are you using?
       placeholder: 0.1.0
     validations:
       required: true
