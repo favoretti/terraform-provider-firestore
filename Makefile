@@ -1,5 +1,5 @@
 HOSTNAME=registry.terraform.io
-NAMESPACE=tbd
+NAMESPACE=favoretti
 NAME=firestore
 BINARY=terraform-provider-${NAME}
 VERSION=$(shell git describe --tags --always --dirty)

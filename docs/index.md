@@ -14,7 +14,7 @@ The Firestore provider allows you to manage [Google Cloud Firestore](https://clo
 terraform {
   required_providers {
     firestore = {
-      source = "registry.terraform.io/tbd/firestore"
+      source = "registry.terraform.io/favoretti/firestore"
     }
   }
 }

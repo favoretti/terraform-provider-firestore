@@ -20,7 +20,7 @@ func main() {
 	flag.Parse()
 
 	opts := providerserver.ServeOpts{
-		Address: "registry.terraform.io/tbd/firestore",
+		Address: "registry.terraform.io/favoretti/firestore",
 		Debug:   debug,
 	}
 
