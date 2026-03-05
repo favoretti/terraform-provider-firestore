@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	"google.golang.org/api/impersonate"
 	"google.golang.org/api/option"
 	"google.golang.org/api/transport"
 )
@@ -26,9 +27,10 @@ type FirestoreProvider struct {
 }
 
 type FirestoreProviderModel struct {
-	Project     types.String `tfsdk:"project"`
-	Credentials types.String `tfsdk:"credentials"`
-	Database    types.String `tfsdk:"database"`
+	Project                   types.String `tfsdk:"project"`
+	Credentials               types.String `tfsdk:"credentials"`
+	Database                  types.String `tfsdk:"database"`
+	ImpersonateServiceAccount types.String `tfsdk:"impersonate_service_account"`
 }
 
 type FirestoreClient struct {
@@ -65,6 +67,10 @@ func (p *FirestoreProvider) Schema(ctx context.Context, req provider.SchemaReque
 			},
 			"database": schema.StringAttribute{
 				Description: "The Firestore database ID. Defaults to '(default)'.",
+				Optional:    true,
+			},
+			"impersonate_service_account": schema.StringAttribute{
+				Description: "The service account email to impersonate for all API calls. The caller must have the `roles/iam.serviceAccountTokenCreator` role on the target service account. Can also be set via the GOOGLE_IMPERSONATE_SERVICE_ACCOUNT environment variable.",
 				Optional:    true,
 			},
 		},
@@ -104,18 +110,24 @@ func (p *FirestoreProvider) Configure(ctx context.Context, req provider.Configur
 		credentials = config.Credentials.ValueString()
 	}
 
-	// Create HTTP client with authentication
-	var httpClient *http.Client
-	var err error
+	// Determine service account to impersonate
+	impersonateServiceAccount := os.Getenv("GOOGLE_IMPERSONATE_SERVICE_ACCOUNT")
+	if !config.ImpersonateServiceAccount.IsNull() {
+		impersonateServiceAccount = config.ImpersonateServiceAccount.ValueString()
+	}
 
 	scopes := []string{
 		"https://www.googleapis.com/auth/datastore",
 		"https://www.googleapis.com/auth/cloud-platform",
 	}
 
+	// Resolve base token source
+	var tokenSource oauth2.TokenSource
+
 	if credentials != "" {
 		// Check if credentials is a file path or JSON content
 		var credJSON []byte
+		var err error
 		if _, statErr := os.Stat(credentials); statErr == nil {
 			credJSON, err = os.ReadFile(credentials)
 			if err != nil {
@@ -148,14 +160,7 @@ func (p *FirestoreProvider) Configure(ctx context.Context, req provider.Configur
 			return
 		}
 
-		httpClient, _, err = transport.NewHTTPClient(context.Background(), option.WithTokenSource(creds.TokenSource))
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Unable to create HTTP client",
-				fmt.Sprintf("Error creating HTTP client: %s", err),
-			)
-			return
-		}
+		tokenSource = creds.TokenSource
 	} else {
 		// Use Application Default Credentials
 		creds, err := google.FindDefaultCredentials(context.Background(), scopes...)
@@ -171,7 +176,33 @@ func (p *FirestoreProvider) Configure(ctx context.Context, req provider.Configur
 			project = creds.ProjectID
 		}
 
-		httpClient = oauth2.NewClient(context.Background(), creds.TokenSource)
+		tokenSource = creds.TokenSource
+	}
+
+	// Wrap token source with impersonation if configured
+	if impersonateServiceAccount != "" {
+		impersonateTS, err := impersonate.CredentialsTokenSource(context.Background(), impersonate.CredentialsConfig{
+			TargetPrincipal: impersonateServiceAccount,
+			Scopes:          scopes,
+		}, option.WithTokenSource(tokenSource))
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Unable to create impersonation credentials",
+				fmt.Sprintf("Error configuring service account impersonation for %q: %s", impersonateServiceAccount, err),
+			)
+			return
+		}
+		tokenSource = impersonateTS
+	}
+
+	// Create HTTP client with authentication
+	httpClient, _, err := transport.NewHTTPClient(context.Background(), option.WithTokenSource(tokenSource))
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Unable to create HTTP client",
+			fmt.Sprintf("Error creating HTTP client: %s", err),
+		)
+		return
 	}
 
 	if project == "" {
