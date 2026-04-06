@@ -46,6 +46,7 @@ type OrderByCondition struct {
 type DocumentResult struct {
 	DocumentID types.String `tfsdk:"document_id"`
 	Fields     types.String `tfsdk:"fields"`
+	FieldsMap  types.Map    `tfsdk:"fields_map"`
 	CreateTime types.String `tfsdk:"create_time"`
 	UpdateTime types.String `tfsdk:"update_time"`
 }
@@ -91,6 +92,11 @@ func (d *DocumentsDataSource) Schema(ctx context.Context, req datasource.SchemaR
 							Description: "JSON string of document fields.",
 							Computed:    true,
 						},
+						"fields_map": schema.MapAttribute{
+							ElementType: types.StringType,
+							Computed:    true,
+							Description: "Top-level string-valued fields as a map. Non-string and nested fields are omitted.",
+						},
 						"create_time": schema.StringAttribute{
 							Description: "The time the document was created.",
 							Computed:    true,
@@ -117,7 +123,7 @@ func (d *DocumentsDataSource) Schema(ctx context.Context, req datasource.SchemaR
 							Required:    true,
 						},
 						"value": schema.StringAttribute{
-							Description: "The value to compare against (JSON encoded).",
+							Description: "The value to compare against. Plain strings can be passed as-is. Use jsonencode() for booleans, numbers, arrays, or objects.",
 							Required:    true,
 						},
 					},
@@ -219,12 +225,14 @@ func (d *DocumentsDataSource) Read(ctx context.Context, req datasource.ReadReque
 			map[string]attr.Type{
 				"document_id": types.StringType,
 				"fields":      types.StringType,
+				"fields_map":  types.MapType{ElemType: types.StringType},
 				"create_time": types.StringType,
 				"update_time": types.StringType,
 			},
 			map[string]attr.Value{
 				"document_id": doc.DocumentID,
 				"fields":      doc.Fields,
+				"fields_map":  doc.FieldsMap,
 				"create_time": doc.CreateTime,
 				"update_time": doc.UpdateTime,
 			},
@@ -236,6 +244,7 @@ func (d *DocumentsDataSource) Read(ctx context.Context, req datasource.ReadReque
 			AttrTypes: map[string]attr.Type{
 				"document_id": types.StringType,
 				"fields":      types.StringType,
+				"fields_map":  types.MapType{ElemType: types.StringType},
 				"create_time": types.StringType,
 				"update_time": types.StringType,
 			},
@@ -292,9 +301,15 @@ func (d *DocumentsDataSource) listDocuments(ctx context.Context, project, databa
 			return nil, diags
 		}
 
+		sm := firestoreFieldsToStringMap(doc.Fields)
+		mapVals := make(map[string]attr.Value, len(sm))
+		for k, v := range sm {
+			mapVals[k] = types.StringValue(v)
+		}
 		documents[i] = DocumentResult{
 			DocumentID: types.StringValue(extractDocumentID(doc.Name)),
 			Fields:     types.StringValue(fieldsJSON),
+			FieldsMap:  types.MapValueMust(types.StringType, mapVals),
 			CreateTime: types.StringValue(doc.CreateTime),
 			UpdateTime: types.StringValue(doc.UpdateTime),
 		}
@@ -318,47 +333,8 @@ func (d *DocumentsDataSource) runStructuredQuery(ctx context.Context, project, d
 		},
 	}
 
-	// Add where filters
 	if len(whereConditions) > 0 {
-		if len(whereConditions) == 1 {
-			cond := whereConditions[0]
-			var value interface{}
-			if err := json.Unmarshal([]byte(cond.Value.ValueString()), &value); err != nil {
-				value = cond.Value.ValueString()
-			}
-			query["where"] = map[string]interface{}{
-				"fieldFilter": map[string]interface{}{
-					"field": map[string]interface{}{
-						"fieldPath": cond.Field.ValueString(),
-					},
-					"op":    cond.Operator.ValueString(),
-					"value": convertToFirestoreValue(value),
-				},
-			}
-		} else {
-			filters := make([]interface{}, len(whereConditions))
-			for i, cond := range whereConditions {
-				var value interface{}
-				if err := json.Unmarshal([]byte(cond.Value.ValueString()), &value); err != nil {
-					value = cond.Value.ValueString()
-				}
-				filters[i] = map[string]interface{}{
-					"fieldFilter": map[string]interface{}{
-						"field": map[string]interface{}{
-							"fieldPath": cond.Field.ValueString(),
-						},
-						"op":    cond.Operator.ValueString(),
-						"value": convertToFirestoreValue(value),
-					},
-				}
-			}
-			query["where"] = map[string]interface{}{
-				"compositeFilter": map[string]interface{}{
-					"op":      "AND",
-					"filters": filters,
-				},
-			}
-		}
+		query["where"] = buildFirestoreWhereClause(whereConditions)
 	}
 
 	// Add order by
@@ -442,9 +418,15 @@ func (d *DocumentsDataSource) runStructuredQuery(ctx context.Context, project, d
 			return nil, diags
 		}
 
+		sm := firestoreFieldsToStringMap(result.Document.Fields)
+		mapVals := make(map[string]attr.Value, len(sm))
+		for k, v := range sm {
+			mapVals[k] = types.StringValue(v)
+		}
 		documents = append(documents, DocumentResult{
 			DocumentID: types.StringValue(extractDocumentID(result.Document.Name)),
 			Fields:     types.StringValue(fieldsJSON),
+			FieldsMap:  types.MapValueMust(types.StringType, mapVals),
 			CreateTime: types.StringValue(result.Document.CreateTime),
 			UpdateTime: types.StringValue(result.Document.UpdateTime),
 		})
