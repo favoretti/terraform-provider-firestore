@@ -29,7 +29,8 @@ type DocumentsDataSourceModel struct {
 	Where      types.List   `tfsdk:"where"`
 	OrderBy    types.List   `tfsdk:"order_by"`
 	Limit      types.Int64  `tfsdk:"limit"`
-	Documents  types.List   `tfsdk:"documents"`
+	Documents    types.List `tfsdk:"documents"`
+	DocumentsMap types.Map  `tfsdk:"documents_map"`
 }
 
 type WhereCondition struct {
@@ -81,6 +82,35 @@ func (d *DocumentsDataSource) Schema(ctx context.Context, req datasource.SchemaR
 			},
 			"documents": schema.ListNestedAttribute{
 				Description: "List of documents in the collection.",
+				Computed:    true,
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"document_id": schema.StringAttribute{
+							Description: "The document ID.",
+							Computed:    true,
+						},
+						"fields": schema.StringAttribute{
+							Description: "JSON string of document fields.",
+							Computed:    true,
+						},
+						"fields_map": schema.MapAttribute{
+							ElementType: types.StringType,
+							Computed:    true,
+							Description: "Top-level string-valued fields as a map. Non-string and nested fields are omitted.",
+						},
+						"create_time": schema.StringAttribute{
+							Description: "The time the document was created.",
+							Computed:    true,
+						},
+						"update_time": schema.StringAttribute{
+							Description: "The time the document was last updated.",
+							Computed:    true,
+						},
+					},
+				},
+			},
+			"documents_map": schema.MapNestedAttribute{
+				Description: "Documents indexed by document_id, for use with for_each.",
 				Computed:    true,
 				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
@@ -239,18 +269,33 @@ func (d *DocumentsDataSource) Read(ctx context.Context, req datasource.ReadReque
 		)
 	}
 
+	docObjAttrTypes := map[string]attr.Type{
+		"document_id": types.StringType,
+		"fields":      types.StringType,
+		"fields_map":  types.MapType{ElemType: types.StringType},
+		"create_time": types.StringType,
+		"update_time": types.StringType,
+	}
+
 	data.Documents = types.ListValueMust(
-		types.ObjectType{
-			AttrTypes: map[string]attr.Type{
-				"document_id": types.StringType,
-				"fields":      types.StringType,
-				"fields_map":  types.MapType{ElemType: types.StringType},
-				"create_time": types.StringType,
-				"update_time": types.StringType,
-			},
-		},
+		types.ObjectType{AttrTypes: docObjAttrTypes},
 		docObjects,
 	)
+
+	mapElems := make(map[string]attr.Value, len(documents))
+	for _, doc := range documents {
+		mapElems[doc.DocumentID.ValueString()] = types.ObjectValueMust(
+			docObjAttrTypes,
+			map[string]attr.Value{
+				"document_id": doc.DocumentID,
+				"fields":      doc.Fields,
+				"fields_map":  doc.FieldsMap,
+				"create_time": doc.CreateTime,
+				"update_time": doc.UpdateTime,
+			},
+		)
+	}
+	data.DocumentsMap = types.MapValueMust(types.ObjectType{AttrTypes: docObjAttrTypes}, mapElems)
 
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
