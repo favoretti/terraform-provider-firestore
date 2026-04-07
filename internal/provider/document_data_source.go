@@ -1,16 +1,16 @@
 package provider
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
@@ -96,6 +96,20 @@ func (d *DocumentDataSource) Schema(ctx context.Context, req datasource.SchemaRe
 						"operator": schema.StringAttribute{
 							Description: "The operator (EQUAL, NOT_EQUAL, LESS_THAN, LESS_THAN_OR_EQUAL, GREATER_THAN, GREATER_THAN_OR_EQUAL, ARRAY_CONTAINS, IN, ARRAY_CONTAINS_ANY, NOT_IN).",
 							Required:    true,
+							Validators: []validator.String{
+								stringvalidator.OneOf(
+									"EQUAL",
+									"NOT_EQUAL",
+									"LESS_THAN",
+									"LESS_THAN_OR_EQUAL",
+									"GREATER_THAN",
+									"GREATER_THAN_OR_EQUAL",
+									"ARRAY_CONTAINS",
+									"IN",
+									"ARRAY_CONTAINS_ANY",
+									"NOT_IN",
+								),
+							},
 						},
 						"value": schema.StringAttribute{
 							Description: "The value to compare against. Plain strings can be passed as-is. Use jsonencode() for booleans, numbers, arrays, or objects.",
@@ -175,22 +189,13 @@ func (d *DocumentDataSource) readByID(ctx context.Context, project, database, co
 		"url": reqURL,
 	})
 
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
-	if err != nil {
-		resp.Diagnostics.AddError("Error creating request", err.Error())
-		return
-	}
-
-	httpResp, err := d.client.HTTPClient.Do(httpReq)
+	statusCode, respBody, err := doHTTPRequest(ctx, d.client.HTTPClient, "GET", reqURL, nil, nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading document", err.Error())
 		return
 	}
-	defer httpResp.Body.Close()
 
-	respBody, _ := io.ReadAll(httpResp.Body)
-
-	if httpResp.StatusCode == http.StatusNotFound {
+	if statusCode == http.StatusNotFound {
 		resp.Diagnostics.AddError(
 			"Document not found",
 			fmt.Sprintf("Document %s/%s not found in project %s, database %s", collection, documentID, project, database),
@@ -198,9 +203,9 @@ func (d *DocumentDataSource) readByID(ctx context.Context, project, database, co
 		return
 	}
 
-	if httpResp.StatusCode != http.StatusOK {
+	if statusCode != http.StatusOK {
 		resp.Diagnostics.AddError("Error reading document",
-			fmt.Sprintf("API returned status %d: %s", httpResp.StatusCode, string(respBody)))
+			fmt.Sprintf("API returned status %d: %s", statusCode, string(respBody)))
 		return
 	}
 
@@ -239,25 +244,16 @@ func (d *DocumentDataSource) readByWhere(ctx context.Context, project, database,
 		"body": string(bodyBytes),
 	})
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(bodyBytes))
-	if err != nil {
-		resp.Diagnostics.AddError("Error creating request", err.Error())
-		return
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	httpResp, err := d.client.HTTPClient.Do(httpReq)
+	statusCode, respBody, err := doHTTPRequest(ctx, d.client.HTTPClient, "POST", reqURL,
+		map[string]string{"Content-Type": "application/json"}, bodyBytes)
 	if err != nil {
 		resp.Diagnostics.AddError("Error querying documents", err.Error())
 		return
 	}
-	defer httpResp.Body.Close()
 
-	respBody, _ := io.ReadAll(httpResp.Body)
-
-	if httpResp.StatusCode != http.StatusOK {
+	if statusCode != http.StatusOK {
 		resp.Diagnostics.AddError("API error",
-			fmt.Sprintf("API returned status %d: %s", httpResp.StatusCode, string(respBody)))
+			fmt.Sprintf("API returned status %d: %s", statusCode, string(respBody)))
 		return
 	}
 

@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
+	"github.com/hashicorp/terraform-plugin-testing/statecheck"
+	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
 func TestAccDocumentDataSource_byID(t *testing.T) {
@@ -25,11 +28,14 @@ data "firestore_document" "test" {
   document_id = firestore_document.seed.document_id
   depends_on  = [firestore_document.seed]
 }`,
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttrSet("data.firestore_document.test", "fields"),
-					resource.TestCheckResourceAttrSet("data.firestore_document.test", "name"),
-					resource.TestCheckResourceAttr("data.firestore_document.test", "fields_map.label", "by-id"),
-				),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("data.firestore_document.test", tfjsonpath.New("fields"), knownvalue.NotNull()),
+					statecheck.ExpectKnownValue("data.firestore_document.test", tfjsonpath.New("name"), knownvalue.NotNull()),
+					statecheck.ExpectKnownValue("data.firestore_document.test",
+						tfjsonpath.New("fields_map").AtMapKey("label"),
+						knownvalue.StringExact("by-id"),
+					),
+				},
 			},
 		},
 	})
@@ -57,10 +63,13 @@ data "firestore_document" "test" {
   }]
   depends_on = [firestore_document.seed]
 }`,
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttrSet("data.firestore_document.test", "document_id"),
-					resource.TestCheckResourceAttr("data.firestore_document.test", "fields_map.marker", "where-single"),
-				),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("data.firestore_document.test", tfjsonpath.New("document_id"), knownvalue.NotNull()),
+					statecheck.ExpectKnownValue("data.firestore_document.test",
+						tfjsonpath.New("fields_map").AtMapKey("marker"),
+						knownvalue.StringExact("where-single"),
+					),
+				},
 			},
 		},
 	})
@@ -87,10 +96,16 @@ data "firestore_document" "test" {
   ]
   depends_on = [firestore_document.seed]
 }`,
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("data.firestore_document.test", "fields_map.role", "admin"),
-					resource.TestCheckResourceAttr("data.firestore_document.test", "fields_map.status", "active"),
-				),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("data.firestore_document.test",
+						tfjsonpath.New("fields_map").AtMapKey("role"),
+						knownvalue.StringExact("admin"),
+					),
+					statecheck.ExpectKnownValue("data.firestore_document.test",
+						tfjsonpath.New("fields_map").AtMapKey("status"),
+						knownvalue.StringExact("active"),
+					),
+				},
 			},
 		},
 	})
@@ -134,7 +149,7 @@ data "firestore_document" "test" {
 }
 
 // TestAccDocumentDataSource_invalidOperator verifies that an invalid operator
-// produces a clear error (failure mode: Section 9 — Input Validation Gaps).
+// produces a plan-time error (failure mode 4: missing input validation).
 func TestAccDocumentDataSource_invalidOperator(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },

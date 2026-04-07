@@ -1,13 +1,12 @@
 package provider
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -21,6 +20,7 @@ import (
 
 var _ resource.Resource = &DocumentResource{}
 var _ resource.ResourceWithImportState = &DocumentResource{}
+var _ resource.ResourceWithUpgradeState = &DocumentResource{}
 
 type DocumentResource struct {
 	client *FirestoreClient
@@ -47,6 +47,7 @@ func (r *DocumentResource) Metadata(ctx context.Context, req resource.MetadataRe
 
 func (r *DocumentResource) Schema(ctx context.Context, req resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
+		Version:     1,
 		Description: "Manages a Firestore document.",
 		Attributes: map[string]schema.Attribute{
 			"project": schema.StringAttribute{
@@ -104,6 +105,64 @@ func (r *DocumentResource) Schema(ctx context.Context, req resource.SchemaReques
 			"update_time": schema.StringAttribute{
 				Description: "The time the document was last updated.",
 				Computed:    true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+		},
+	}
+}
+
+// UpgradeState migrates state from schema version 0 (no version set) to version 1.
+// The structure is unchanged; the upgrade preserves all existing attribute values.
+func (r *DocumentResource) UpgradeState(ctx context.Context) map[int64]resource.StateUpgrader {
+	return map[int64]resource.StateUpgrader{
+		0: {
+			PriorSchema: &schema.Schema{
+				Attributes: map[string]schema.Attribute{
+					"project": schema.StringAttribute{
+						Optional: true,
+						Computed: true,
+						PlanModifiers: []planmodifier.String{
+							stringplanmodifier.RequiresReplace(),
+							stringplanmodifier.UseStateForUnknown(),
+						},
+					},
+					"database": schema.StringAttribute{
+						Optional: true,
+						Computed: true,
+						PlanModifiers: []planmodifier.String{
+							stringplanmodifier.RequiresReplace(),
+							stringplanmodifier.UseStateForUnknown(),
+						},
+					},
+					"collection": schema.StringAttribute{
+						Required: true,
+						PlanModifiers: []planmodifier.String{
+							stringplanmodifier.RequiresReplace(),
+						},
+					},
+					"document_id": schema.StringAttribute{
+						Optional: true,
+						Computed: true,
+						PlanModifiers: []planmodifier.String{
+							stringplanmodifier.RequiresReplace(),
+							stringplanmodifier.UseStateForUnknown(),
+						},
+					},
+					"fields":      schema.StringAttribute{Required: true},
+					"name":        schema.StringAttribute{Computed: true},
+					"create_time": schema.StringAttribute{Computed: true},
+					"update_time": schema.StringAttribute{Computed: true},
+				},
+			},
+			StateUpgrader: func(ctx context.Context, req resource.UpgradeStateRequest, resp *resource.UpgradeStateResponse) {
+				var priorState DocumentResourceModel
+				resp.Diagnostics.Append(req.State.Get(ctx, &priorState)...)
+				if resp.Diagnostics.HasError() {
+					return
+				}
+				resp.Diagnostics.Append(resp.State.Set(ctx, priorState)...)
 			},
 		},
 	}
@@ -143,14 +202,12 @@ func (r *DocumentResource) Create(ctx context.Context, req resource.CreateReques
 		database = data.Database.ValueString()
 	}
 
-	// Convert JSON fields to Firestore format
 	firestoreFields, err := jsonToFirestoreFields(data.Fields.ValueString())
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid fields JSON", err.Error())
 		return
 	}
 
-	// Build URL
 	baseURL := fmt.Sprintf("https://firestore.googleapis.com/v1/projects/%s/databases/%s/documents/%s",
 		project, database, data.Collection.ValueString())
 
@@ -161,10 +218,7 @@ func (r *DocumentResource) Create(ctx context.Context, req resource.CreateReques
 		reqURL = baseURL
 	}
 
-	// Create request body
-	body := map[string]interface{}{
-		"fields": firestoreFields,
-	}
+	body := map[string]interface{}{"fields": firestoreFields}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
 		resp.Diagnostics.AddError("Error marshaling request body", err.Error())
@@ -176,26 +230,17 @@ func (r *DocumentResource) Create(ctx context.Context, req resource.CreateReques
 		"body": string(bodyBytes),
 	})
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(bodyBytes))
-	if err != nil {
-		resp.Diagnostics.AddError("Error creating request", err.Error())
-		return
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	httpResp, err := r.client.HTTPClient.Do(httpReq)
+	statusCode, respBody, err := doHTTPRequest(ctx, r.client.HTTPClient, "POST", reqURL,
+		map[string]string{"Content-Type": "application/json"}, bodyBytes)
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating document", err.Error())
 		return
 	}
-	defer httpResp.Body.Close()
 
-	respBody, _ := io.ReadAll(httpResp.Body)
-
-	if httpResp.StatusCode != http.StatusOK {
+	if statusCode != http.StatusOK {
 		resp.Diagnostics.AddError(
 			"Error creating document",
-			fmt.Sprintf("API returned status %d: %s", httpResp.StatusCode, string(respBody)),
+			fmt.Sprintf("API returned status %d: %s", statusCode, string(respBody)),
 		)
 		return
 	}
@@ -206,10 +251,8 @@ func (r *DocumentResource) Create(ctx context.Context, req resource.CreateReques
 		return
 	}
 
-	// Extract document ID from name
 	docID := extractDocumentID(doc.Name)
 
-	// Convert Firestore fields back to JSON
 	fieldsJSON, err := firestoreFieldsToJSON(doc.Fields)
 	if err != nil {
 		resp.Diagnostics.AddError("Error converting fields", err.Error())
@@ -251,30 +294,21 @@ func (r *DocumentResource) Read(ctx context.Context, req resource.ReadRequest, r
 		"url": reqURL,
 	})
 
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
-	if err != nil {
-		resp.Diagnostics.AddError("Error creating request", err.Error())
-		return
-	}
-
-	httpResp, err := r.client.HTTPClient.Do(httpReq)
+	statusCode, respBody, err := doHTTPRequest(ctx, r.client.HTTPClient, "GET", reqURL, nil, nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading document", err.Error())
 		return
 	}
-	defer httpResp.Body.Close()
 
-	if httpResp.StatusCode == http.StatusNotFound {
+	if statusCode == http.StatusNotFound {
 		resp.State.RemoveResource(ctx)
 		return
 	}
 
-	respBody, _ := io.ReadAll(httpResp.Body)
-
-	if httpResp.StatusCode != http.StatusOK {
+	if statusCode != http.StatusOK {
 		resp.Diagnostics.AddError(
 			"Error reading document",
-			fmt.Sprintf("API returned status %d: %s", httpResp.StatusCode, string(respBody)),
+			fmt.Sprintf("API returned status %d: %s", statusCode, string(respBody)),
 		)
 		return
 	}
@@ -324,12 +358,21 @@ func (r *DocumentResource) Update(ctx context.Context, req resource.UpdateReques
 		return
 	}
 
-	reqURL := fmt.Sprintf("https://firestore.googleapis.com/v1/projects/%s/databases/%s/documents/%s/%s",
+	// Build URL with updateMask so only Terraform-managed fields are written;
+	// unmanaged fields in Firestore are left untouched.
+	baseURL := fmt.Sprintf("https://firestore.googleapis.com/v1/projects/%s/databases/%s/documents/%s/%s",
 		project, database, data.Collection.ValueString(), data.DocumentID.ValueString())
 
-	body := map[string]interface{}{
-		"fields": firestoreFields,
+	params := url.Values{}
+	for fieldPath := range firestoreFields {
+		params.Add("updateMask.fieldPaths", fieldPath)
 	}
+	reqURL := baseURL
+	if len(params) > 0 {
+		reqURL = baseURL + "?" + params.Encode()
+	}
+
+	body := map[string]interface{}{"fields": firestoreFields}
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
 		resp.Diagnostics.AddError("Error marshaling request body", err.Error())
@@ -341,26 +384,17 @@ func (r *DocumentResource) Update(ctx context.Context, req resource.UpdateReques
 		"body": string(bodyBytes),
 	})
 
-	httpReq, err := http.NewRequestWithContext(ctx, "PATCH", reqURL, bytes.NewReader(bodyBytes))
-	if err != nil {
-		resp.Diagnostics.AddError("Error creating request", err.Error())
-		return
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	httpResp, err := r.client.HTTPClient.Do(httpReq)
+	statusCode, respBody, err := doHTTPRequest(ctx, r.client.HTTPClient, "PATCH", reqURL,
+		map[string]string{"Content-Type": "application/json"}, bodyBytes)
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating document", err.Error())
 		return
 	}
-	defer httpResp.Body.Close()
 
-	respBody, _ := io.ReadAll(httpResp.Body)
-
-	if httpResp.StatusCode != http.StatusOK {
+	if statusCode != http.StatusOK {
 		resp.Diagnostics.AddError(
 			"Error updating document",
-			fmt.Sprintf("API returned status %d: %s", httpResp.StatusCode, string(respBody)),
+			fmt.Sprintf("API returned status %d: %s", statusCode, string(respBody)),
 		)
 		return
 	}
@@ -410,32 +444,21 @@ func (r *DocumentResource) Delete(ctx context.Context, req resource.DeleteReques
 		"url": reqURL,
 	})
 
-	httpReq, err := http.NewRequestWithContext(ctx, "DELETE", reqURL, nil)
-	if err != nil {
-		resp.Diagnostics.AddError("Error creating request", err.Error())
-		return
-	}
-
-	httpResp, err := r.client.HTTPClient.Do(httpReq)
+	statusCode, respBody, err := doHTTPRequest(ctx, r.client.HTTPClient, "DELETE", reqURL, nil, nil)
 	if err != nil {
 		resp.Diagnostics.AddError("Error deleting document", err.Error())
 		return
 	}
-	defer httpResp.Body.Close()
 
-	if httpResp.StatusCode != http.StatusOK && httpResp.StatusCode != http.StatusNotFound {
-		respBody, _ := io.ReadAll(httpResp.Body)
+	if statusCode != http.StatusOK && statusCode != http.StatusNotFound {
 		resp.Diagnostics.AddError(
 			"Error deleting document",
-			fmt.Sprintf("API returned status %d: %s", httpResp.StatusCode, string(respBody)),
+			fmt.Sprintf("API returned status %d: %s", statusCode, string(respBody)),
 		)
-		return
 	}
 }
 
 func (r *DocumentResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	// Import format: project/database/collection/document_id
-	// or: collection/document_id (uses provider defaults)
 	parts := strings.Split(req.ID, "/")
 
 	if len(parts) < 2 {
@@ -447,21 +470,19 @@ func (r *DocumentResource) ImportState(ctx context.Context, req resource.ImportS
 	}
 
 	if len(parts) >= 4 {
-		// Full format: project/database/collection.../document_id
 		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project"), parts[0])...)
 		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("database"), parts[1])...)
 		collection := strings.Join(parts[2:len(parts)-1], "/")
 		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("collection"), collection)...)
 		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("document_id"), parts[len(parts)-1])...)
 	} else {
-		// Short format: collection/document_id
 		collection := strings.Join(parts[:len(parts)-1], "/")
 		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("collection"), collection)...)
 		resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("document_id"), parts[len(parts)-1])...)
 	}
 }
 
-// FirestoreDocument represents a Firestore document response
+// FirestoreDocument represents a Firestore document response.
 type FirestoreDocument struct {
 	Name       string                 `json:"name"`
 	Fields     map[string]interface{} `json:"fields"`
@@ -469,7 +490,6 @@ type FirestoreDocument struct {
 	UpdateTime string                 `json:"updateTime"`
 }
 
-// extractDocumentID extracts the document ID from the full resource name
 func extractDocumentID(name string) string {
 	parts := strings.Split(name, "/")
 	if len(parts) > 0 {
@@ -478,10 +498,15 @@ func extractDocumentID(name string) string {
 	return name
 }
 
-// jsonToFirestoreFields converts a JSON string to Firestore field format
+// jsonToFirestoreFields converts a JSON string to Firestore field format.
+// Uses json.Decoder with UseNumber to preserve integer precision for values
+// larger than 2^53.
 func jsonToFirestoreFields(jsonStr string) (map[string]interface{}, error) {
+	dec := json.NewDecoder(strings.NewReader(jsonStr))
+	dec.UseNumber()
+
 	var data map[string]interface{}
-	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+	if err := dec.Decode(&data); err != nil {
 		return nil, fmt.Errorf("invalid JSON: %w", err)
 	}
 
@@ -492,7 +517,9 @@ func jsonToFirestoreFields(jsonStr string) (map[string]interface{}, error) {
 	return fields, nil
 }
 
-// convertToFirestoreValue converts a Go value to Firestore value format
+// convertToFirestoreValue converts a Go value to Firestore value format.
+// json.Number values (produced by Decoder.UseNumber) are mapped to integerValue
+// when they parse as int64, and to doubleValue otherwise.
 func convertToFirestoreValue(v interface{}) interface{} {
 	if v == nil {
 		return map[string]interface{}{"nullValue": nil}
@@ -501,8 +528,15 @@ func convertToFirestoreValue(v interface{}) interface{} {
 	switch val := v.(type) {
 	case bool:
 		return map[string]interface{}{"booleanValue": val}
+	case json.Number:
+		if i, err := val.Int64(); err == nil {
+			return map[string]interface{}{"integerValue": fmt.Sprintf("%d", i)}
+		}
+		if f, err := val.Float64(); err == nil {
+			return map[string]interface{}{"doubleValue": f}
+		}
+		return map[string]interface{}{"stringValue": val.String()}
 	case float64:
-		// Check if it's an integer
 		if val == float64(int64(val)) {
 			return map[string]interface{}{"integerValue": fmt.Sprintf("%d", int64(val))}
 		}
@@ -534,7 +568,7 @@ func convertToFirestoreValue(v interface{}) interface{} {
 	}
 }
 
-// firestoreFieldsToJSON converts Firestore fields to a JSON string
+// firestoreFieldsToJSON converts Firestore fields to a JSON string.
 func firestoreFieldsToJSON(fields map[string]interface{}) (string, error) {
 	data := convertFromFirestoreFields(fields)
 	jsonBytes, err := json.Marshal(data)
@@ -544,7 +578,6 @@ func firestoreFieldsToJSON(fields map[string]interface{}) (string, error) {
 	return string(jsonBytes), nil
 }
 
-// convertFromFirestoreFields converts Firestore fields to Go map
 func convertFromFirestoreFields(fields map[string]interface{}) map[string]interface{} {
 	result := make(map[string]interface{})
 	for k, v := range fields {
@@ -553,7 +586,9 @@ func convertFromFirestoreFields(fields map[string]interface{}) map[string]interf
 	return result
 }
 
-// convertFromFirestoreValue converts a Firestore value to Go value
+// convertFromFirestoreValue converts a Firestore value to a Go value.
+// Integer values are parsed with strconv.ParseInt to avoid silent data loss
+// on parse failure.
 func convertFromFirestoreValue(v interface{}) interface{} {
 	if v == nil {
 		return nil
@@ -572,8 +607,10 @@ func convertFromFirestoreValue(v interface{}) interface{} {
 	}
 	if iv, ok := val["integerValue"]; ok {
 		if s, ok := iv.(string); ok {
-			var i int64
-			fmt.Sscanf(s, "%d", &i)
+			i, err := strconv.ParseInt(s, 10, 64)
+			if err != nil {
+				return s
+			}
 			return i
 		}
 		return iv

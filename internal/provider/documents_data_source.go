@@ -1,17 +1,17 @@
 package provider
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
@@ -23,14 +23,14 @@ type DocumentsDataSource struct {
 }
 
 type DocumentsDataSourceModel struct {
-	Project    types.String `tfsdk:"project"`
-	Database   types.String `tfsdk:"database"`
-	Collection types.String `tfsdk:"collection"`
-	Where      types.List   `tfsdk:"where"`
-	OrderBy    types.List   `tfsdk:"order_by"`
-	Limit      types.Int64  `tfsdk:"limit"`
-	Documents    types.List `tfsdk:"documents"`
-	DocumentsMap types.Map  `tfsdk:"documents_map"`
+	Project      types.String `tfsdk:"project"`
+	Database     types.String `tfsdk:"database"`
+	Collection   types.String `tfsdk:"collection"`
+	Where        types.List   `tfsdk:"where"`
+	OrderBy      types.List   `tfsdk:"order_by"`
+	Limit        types.Int64  `tfsdk:"limit"`
+	Documents    types.List   `tfsdk:"documents"`
+	DocumentsMap types.Map    `tfsdk:"documents_map"`
 }
 
 type WhereCondition struct {
@@ -150,6 +150,20 @@ func (d *DocumentsDataSource) Schema(ctx context.Context, req datasource.SchemaR
 						"operator": schema.StringAttribute{
 							Description: "The operator (EQUAL, NOT_EQUAL, LESS_THAN, LESS_THAN_OR_EQUAL, GREATER_THAN, GREATER_THAN_OR_EQUAL, ARRAY_CONTAINS, IN, ARRAY_CONTAINS_ANY, NOT_IN).",
 							Required:    true,
+							Validators: []validator.String{
+								stringvalidator.OneOf(
+									"EQUAL",
+									"NOT_EQUAL",
+									"LESS_THAN",
+									"LESS_THAN_OR_EQUAL",
+									"GREATER_THAN",
+									"GREATER_THAN_OR_EQUAL",
+									"ARRAY_CONTAINS",
+									"IN",
+									"ARRAY_CONTAINS_ANY",
+									"NOT_IN",
+								),
+							},
 						},
 						"value": schema.StringAttribute{
 							Description: "The value to compare against. Plain strings can be passed as-is. Use jsonencode() for booleans, numbers, arrays, or objects.",
@@ -170,6 +184,9 @@ func (d *DocumentsDataSource) Schema(ctx context.Context, req datasource.SchemaR
 						"direction": schema.StringAttribute{
 							Description: "The direction (ASCENDING or DESCENDING).",
 							Optional:    true,
+							Validators: []validator.String{
+								stringvalidator.OneOf("ASCENDING", "DESCENDING"),
+							},
 						},
 					},
 				},
@@ -212,7 +229,6 @@ func (d *DocumentsDataSource) Read(ctx context.Context, req datasource.ReadReque
 		database = data.Database.ValueString()
 	}
 
-	// Parse where conditions
 	var whereConditions []WhereCondition
 	if !data.Where.IsNull() {
 		resp.Diagnostics.Append(data.Where.ElementsAs(ctx, &whereConditions, false)...)
@@ -221,7 +237,6 @@ func (d *DocumentsDataSource) Read(ctx context.Context, req datasource.ReadReque
 		}
 	}
 
-	// Parse order_by conditions
 	var orderByConditions []OrderByCondition
 	if !data.OrderBy.IsNull() {
 		resp.Diagnostics.Append(data.OrderBy.ElementsAs(ctx, &orderByConditions, false)...)
@@ -230,7 +245,6 @@ func (d *DocumentsDataSource) Read(ctx context.Context, req datasource.ReadReque
 		}
 	}
 
-	// Build structured query
 	hasFilters := len(whereConditions) > 0 || len(orderByConditions) > 0 || !data.Limit.IsNull()
 
 	var documents []DocumentResult
@@ -248,7 +262,6 @@ func (d *DocumentsDataSource) Read(ctx context.Context, req datasource.ReadReque
 		return
 	}
 
-	// Convert to types.List
 	docObjects := make([]attr.Value, len(documents))
 	for i, doc := range documents {
 		docObjects[i] = types.ObjectValueMust(
@@ -310,23 +323,14 @@ func (d *DocumentsDataSource) listDocuments(ctx context.Context, project, databa
 		"url": reqURL,
 	})
 
-	httpReq, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
-	if err != nil {
-		diags.AddError("Error creating request", err.Error())
-		return nil, diags
-	}
-
-	httpResp, err := d.client.HTTPClient.Do(httpReq)
+	statusCode, respBody, err := doHTTPRequest(ctx, d.client.HTTPClient, "GET", reqURL, nil, nil)
 	if err != nil {
 		diags.AddError("Error listing documents", err.Error())
 		return nil, diags
 	}
-	defer httpResp.Body.Close()
 
-	respBody, _ := io.ReadAll(httpResp.Body)
-
-	if httpResp.StatusCode != http.StatusOK {
-		diags.AddError("API error", fmt.Sprintf("API returned status %d: %s", httpResp.StatusCode, string(respBody)))
+	if statusCode != http.StatusOK {
+		diags.AddError("API error", fmt.Sprintf("API returned status %d: %s", statusCode, string(respBody)))
 		return nil, diags
 	}
 
@@ -371,7 +375,6 @@ func (d *DocumentsDataSource) runStructuredQuery(ctx context.Context, project, d
 	reqURL := fmt.Sprintf("https://firestore.googleapis.com/v1/projects/%s/databases/%s/documents:runQuery",
 		project, database)
 
-	// Build structured query
 	query := map[string]interface{}{
 		"from": []map[string]interface{}{
 			{"collectionId": collection},
@@ -382,7 +385,6 @@ func (d *DocumentsDataSource) runStructuredQuery(ctx context.Context, project, d
 		query["where"] = buildFirestoreWhereClause(whereConditions)
 	}
 
-	// Add order by
 	if len(orderByConditions) > 0 {
 		orderBy := make([]interface{}, len(orderByConditions))
 		for i, cond := range orderByConditions {
@@ -400,16 +402,11 @@ func (d *DocumentsDataSource) runStructuredQuery(ctx context.Context, project, d
 		query["orderBy"] = orderBy
 	}
 
-	// Add limit
 	if !limit.IsNull() {
 		query["limit"] = limit.ValueInt64()
 	}
 
-	body := map[string]interface{}{
-		"structuredQuery": query,
-	}
-
-	bodyBytes, err := json.Marshal(body)
+	bodyBytes, err := json.Marshal(map[string]interface{}{"structuredQuery": query})
 	if err != nil {
 		diags.AddError("Error marshaling query", err.Error())
 		return nil, diags
@@ -420,24 +417,15 @@ func (d *DocumentsDataSource) runStructuredQuery(ctx context.Context, project, d
 		"body": string(bodyBytes),
 	})
 
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", reqURL, bytes.NewReader(bodyBytes))
-	if err != nil {
-		diags.AddError("Error creating request", err.Error())
-		return nil, diags
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-
-	httpResp, err := d.client.HTTPClient.Do(httpReq)
+	statusCode, respBody, err := doHTTPRequest(ctx, d.client.HTTPClient, "POST", reqURL,
+		map[string]string{"Content-Type": "application/json"}, bodyBytes)
 	if err != nil {
 		diags.AddError("Error running query", err.Error())
 		return nil, diags
 	}
-	defer httpResp.Body.Close()
 
-	respBody, _ := io.ReadAll(httpResp.Body)
-
-	if httpResp.StatusCode != http.StatusOK {
-		diags.AddError("API error", fmt.Sprintf("API returned status %d: %s", httpResp.StatusCode, string(respBody)))
+	if statusCode != http.StatusOK {
+		diags.AddError("API error", fmt.Sprintf("API returned status %d: %s", statusCode, string(respBody)))
 		return nil, diags
 	}
 

@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
+	"github.com/hashicorp/terraform-plugin-testing/statecheck"
+	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 )
 
 func TestAccDocumentsDataSource_list(t *testing.T) {
@@ -28,11 +31,16 @@ data "firestore_documents" "test" {
   collection = "tf-acc-test-list"
   depends_on = [firestore_document.a, firestore_document.b]
 }`,
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttrSet("data.firestore_documents.test", "documents.#"),
-					resource.TestCheckResourceAttrSet("data.firestore_documents.test", "documents_map.list-doc-a.document_id"),
-					resource.TestCheckResourceAttrSet("data.firestore_documents.test", "documents_map.list-doc-b.document_id"),
-				),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("data.firestore_documents.test",
+						tfjsonpath.New("documents_map").AtMapKey("list-doc-a").AtMapKey("document_id"),
+						knownvalue.NotNull(),
+					),
+					statecheck.ExpectKnownValue("data.firestore_documents.test",
+						tfjsonpath.New("documents_map").AtMapKey("list-doc-b").AtMapKey("document_id"),
+						knownvalue.NotNull(),
+					),
+				},
 			},
 		},
 	})
@@ -64,10 +72,16 @@ data "firestore_documents" "test" {
   }]
   depends_on = [firestore_document.match, firestore_document.nomatch]
 }`,
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("data.firestore_documents.test", "documents.#", "1"),
-					resource.TestCheckResourceAttr("data.firestore_documents.test", "documents.0.fields_map.env", "test"),
-				),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("data.firestore_documents.test",
+						tfjsonpath.New("documents"),
+						knownvalue.ListSizeExact(1),
+					),
+					statecheck.ExpectKnownValue("data.firestore_documents.test",
+						tfjsonpath.New("documents").AtSliceIndex(0).AtMapKey("fields_map").AtMapKey("env"),
+						knownvalue.StringExact("test"),
+					),
+				},
 			},
 		},
 	})
@@ -98,10 +112,16 @@ data "firestore_documents" "test" {
   ]
   depends_on = [firestore_document.both, firestore_document.one]
 }`,
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttr("data.firestore_documents.test", "documents.#", "1"),
-					resource.TestCheckResourceAttr("data.firestore_documents.test", "documents.0.fields_map.status", "active"),
-				),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("data.firestore_documents.test",
+						tfjsonpath.New("documents"),
+						knownvalue.ListSizeExact(1),
+					),
+					statecheck.ExpectKnownValue("data.firestore_documents.test",
+						tfjsonpath.New("documents").AtSliceIndex(0).AtMapKey("fields_map").AtMapKey("status"),
+						knownvalue.StringExact("active"),
+					),
+				},
 			},
 		},
 	})
@@ -134,7 +154,12 @@ data "firestore_documents" "test" {
   limit      = 2
   depends_on = [firestore_document.x, firestore_document.y, firestore_document.z]
 }`,
-				Check: resource.TestCheckResourceAttr("data.firestore_documents.test", "documents.#", "2"),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("data.firestore_documents.test",
+						tfjsonpath.New("documents"),
+						knownvalue.ListSizeExact(2),
+					),
+				},
 			},
 		},
 	})
@@ -156,17 +181,23 @@ data "firestore_documents" "test" {
   collection = "tf-acc-test-map"
   depends_on = [firestore_document.p]
 }`,
-				Check: resource.ComposeTestCheckFunc(
-					resource.TestCheckResourceAttrSet("data.firestore_documents.test", "documents_map.map-doc-p.document_id"),
-					resource.TestCheckResourceAttr("data.firestore_documents.test", "documents_map.map-doc-p.fields_map.label", "p"),
-				),
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("data.firestore_documents.test",
+						tfjsonpath.New("documents_map").AtMapKey("map-doc-p").AtMapKey("document_id"),
+						knownvalue.NotNull(),
+					),
+					statecheck.ExpectKnownValue("data.firestore_documents.test",
+						tfjsonpath.New("documents_map").AtMapKey("map-doc-p").AtMapKey("fields_map").AtMapKey("label"),
+						knownvalue.StringExact("p"),
+					),
+				},
 			},
 		},
 	})
 }
 
 // TestAccDocumentsDataSource_invalidOperator verifies that an invalid operator
-// produces an error (failure mode: Section 9 — Input Validation Gaps).
+// produces a plan-time error (failure mode 4: missing input validation).
 func TestAccDocumentsDataSource_invalidOperator(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
@@ -189,7 +220,7 @@ data "firestore_documents" "test" {
 }
 
 // TestAccDocumentsDataSource_invalidDirection verifies that an invalid direction
-// produces an error (failure mode: Section 9 — Input Validation Gaps).
+// produces a plan-time error (failure mode 4: missing input validation).
 func TestAccDocumentsDataSource_invalidDirection(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
