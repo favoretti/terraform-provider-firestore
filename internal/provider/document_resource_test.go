@@ -4,8 +4,12 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strings"
 	"testing"
 
+	fwresource "github.com/hashicorp/terraform-plugin-framework/resource"
+	fwschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
@@ -365,4 +369,143 @@ resource "firestore_document" "test" {
 			},
 		},
 	})
+}
+
+// TestDocumentResourceSchema_projectRequiresReplace verifies the project attribute
+// carries RequiresReplace (failure mode 1: schema stability).
+func TestDocumentResourceSchema_projectRequiresReplace(t *testing.T) {
+	ctx := context.Background()
+	r := &DocumentResource{}
+
+	var schemaResp fwresource.SchemaResponse
+	r.Schema(ctx, fwresource.SchemaRequest{}, &schemaResp)
+
+	attr, ok := schemaResp.Schema.Attributes["project"]
+	if !ok {
+		t.Fatal("project attribute not found in document resource schema")
+	}
+	sa, ok := attr.(fwschema.StringAttribute)
+	if !ok {
+		t.Fatalf("project is not a StringAttribute, got %T", attr)
+	}
+	hasRequiresReplace := false
+	for _, pm := range sa.PlanModifiers {
+		if strings.Contains(strings.ToLower(fmt.Sprintf("%T", pm)), "requiresreplace") {
+			hasRequiresReplace = true
+		}
+	}
+	if !hasRequiresReplace {
+		t.Error("project attribute must have RequiresReplace plan modifier")
+	}
+}
+
+// TestAccDocumentResource_invalidFieldsJSON verifies that a non-JSON-object value in
+// fields produces a plan-time error (failure mode 4: missing input validation).
+func TestAccDocumentResource_invalidFieldsJSON(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: providerConfig() + `
+resource "firestore_document" "test" {
+  collection = "tf-acc-test"
+  fields     = "not valid json"
+}`,
+				ExpectError: regexp.MustCompile(`(?i)invalid json|valid json`),
+			},
+		},
+	})
+}
+
+// TestAccDocumentResource_updateMaskPreservesUnmanagedField verifies that Update()
+// leaves fields not present in the Terraform config untouched in Firestore
+// (failure mode 2: data loss on update).
+//
+// The resource will show a non-empty plan after the apply because Read() stores all
+// Firestore fields in state (including the extra field), while the config only
+// declares the managed field. This is expected: updateMask prevents deletion but
+// does not eliminate the config/state diff caused by unmanaged fields.
+func TestAccDocumentResource_updateMaskPreservesUnmanagedField(t *testing.T) {
+	project := projectFromEnv()
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: providerConfig() + `
+resource "firestore_document" "test" {
+  collection  = "tf-acc-test"
+  document_id = "updatemask-test"
+  fields      = jsonencode({ managed = "yes" })
+}`,
+			},
+			{
+				PreConfig: func() {
+					testAccPatchFirestoreField(t, project, "(default)", "tf-acc-test", "updatemask-test", "extra", "preserved")
+				},
+				Config: providerConfig() + `
+resource "firestore_document" "test" {
+  collection  = "tf-acc-test"
+  document_id = "updatemask-test"
+  fields      = jsonencode({ managed = "yes" })
+}
+data "firestore_document" "verify" {
+  collection  = "tf-acc-test"
+  document_id = "updatemask-test"
+  depends_on  = [firestore_document.test]
+}`,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("data.firestore_document.verify",
+						tfjsonpath.New("fields_map").AtMapKey("extra"),
+						knownvalue.StringExact("preserved"),
+					),
+				},
+				ExpectNonEmptyPlan: true,
+			},
+		},
+	})
+}
+
+// testAccPatchFirestoreField adds a single string field to an existing Firestore
+// document via the REST API using updateMask, leaving all other fields unchanged.
+func testAccPatchFirestoreField(t *testing.T, project, database, collection, docID, field, value string) {
+	t.Helper()
+	ctx := context.Background()
+
+	creds, err := google.FindDefaultCredentials(ctx,
+		"https://www.googleapis.com/auth/datastore",
+		"https://www.googleapis.com/auth/cloud-platform",
+	)
+	if err != nil {
+		t.Fatalf("finding credentials for field patch: %v", err)
+	}
+
+	reqURL := fmt.Sprintf(
+		"https://firestore.googleapis.com/v1/projects/%s/databases/%s/documents/%s/%s?updateMask.fieldPaths=%s",
+		project, database, collection, docID, field,
+	)
+
+	body := fmt.Sprintf(`{"fields":{%q:{"stringValue":%q}}}`, field, value)
+	req, err := http.NewRequestWithContext(ctx, "PATCH", reqURL, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("building patch request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	token, err := creds.TokenSource.Token()
+	if err != nil {
+		t.Fatalf("getting token for field patch: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("patching field %s/%s.%s: %v", collection, docID, field, err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("unexpected status %d patching field %s/%s.%s", resp.StatusCode, collection, docID, field)
+	}
 }

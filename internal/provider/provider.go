@@ -77,6 +77,57 @@ func (p *FirestoreProvider) Schema(ctx context.Context, req provider.SchemaReque
 	}
 }
 
+// resolvedProviderConfig holds the resolved values for all provider configuration
+// fields after applying environment variable and HCL attribute precedence.
+type resolvedProviderConfig struct {
+	project                   string
+	database                  string
+	credentials               string
+	impersonateServiceAccount string
+}
+
+// resolveProviderConfig applies the following precedence for each field,
+// from lowest to highest priority: env var → HCL attribute.
+//
+//   - project: GOOGLE_PROJECT → GOOGLE_CLOUD_PROJECT → config.Project
+//   - database: literal "(default)" → config.Database
+//   - credentials: GOOGLE_CREDENTIALS → GOOGLE_APPLICATION_CREDENTIALS → config.Credentials
+//   - impersonate_service_account: GOOGLE_IMPERSONATE_SERVICE_ACCOUNT → config.ImpersonateServiceAccount
+func resolveProviderConfig(config FirestoreProviderModel) resolvedProviderConfig {
+	project := os.Getenv("GOOGLE_PROJECT")
+	if project == "" {
+		project = os.Getenv("GOOGLE_CLOUD_PROJECT")
+	}
+	if !config.Project.IsNull() {
+		project = config.Project.ValueString()
+	}
+
+	database := "(default)"
+	if !config.Database.IsNull() {
+		database = config.Database.ValueString()
+	}
+
+	credentials := os.Getenv("GOOGLE_CREDENTIALS")
+	if credentials == "" {
+		credentials = os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
+	}
+	if !config.Credentials.IsNull() {
+		credentials = config.Credentials.ValueString()
+	}
+
+	impersonateServiceAccount := os.Getenv("GOOGLE_IMPERSONATE_SERVICE_ACCOUNT")
+	if !config.ImpersonateServiceAccount.IsNull() {
+		impersonateServiceAccount = config.ImpersonateServiceAccount.ValueString()
+	}
+
+	return resolvedProviderConfig{
+		project:                   project,
+		database:                  database,
+		credentials:               credentials,
+		impersonateServiceAccount: impersonateServiceAccount,
+	}
+}
+
 func (p *FirestoreProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
 	tflog.Info(ctx, "Configuring Firestore provider")
 
@@ -86,35 +137,11 @@ func (p *FirestoreProvider) Configure(ctx context.Context, req provider.Configur
 		return
 	}
 
-	// Determine project
-	project := os.Getenv("GOOGLE_PROJECT")
-	if project == "" {
-		project = os.Getenv("GOOGLE_CLOUD_PROJECT")
-	}
-	if !config.Project.IsNull() {
-		project = config.Project.ValueString()
-	}
-
-	// Determine database
-	database := "(default)"
-	if !config.Database.IsNull() {
-		database = config.Database.ValueString()
-	}
-
-	// Determine credentials
-	credentials := os.Getenv("GOOGLE_CREDENTIALS")
-	if credentials == "" {
-		credentials = os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")
-	}
-	if !config.Credentials.IsNull() {
-		credentials = config.Credentials.ValueString()
-	}
-
-	// Determine service account to impersonate
-	impersonateServiceAccount := os.Getenv("GOOGLE_IMPERSONATE_SERVICE_ACCOUNT")
-	if !config.ImpersonateServiceAccount.IsNull() {
-		impersonateServiceAccount = config.ImpersonateServiceAccount.ValueString()
-	}
+	resolved := resolveProviderConfig(config)
+	project := resolved.project
+	database := resolved.database
+	credentials := resolved.credentials
+	impersonateServiceAccount := resolved.impersonateServiceAccount
 
 	scopes := []string{
 		"https://www.googleapis.com/auth/datastore",
