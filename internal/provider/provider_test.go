@@ -1,9 +1,12 @@
 package provider
 
 import (
+	"context"
 	"os"
 	"testing"
 
+	providerfw "github.com/hashicorp/terraform-plugin-framework/provider"
+	providerSchema "github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 )
@@ -31,4 +34,24 @@ func projectFromEnv() string {
 		return v
 	}
 	return os.Getenv("GOOGLE_CLOUD_PROJECT")
+}
+
+func TestProviderSchema_credentialsSensitive(t *testing.T) {
+	ctx := context.Background()
+	p := &FirestoreProvider{version: "test"}
+
+	var resp providerfw.SchemaResponse
+	p.Schema(ctx, providerfw.SchemaRequest{}, &resp)
+
+	attr, ok := resp.Schema.Attributes["credentials"]
+	if !ok {
+		t.Fatal("credentials attribute not found in provider schema")
+	}
+	sa, ok := attr.(providerSchema.StringAttribute)
+	if !ok {
+		t.Fatalf("credentials is not a StringAttribute, got %T", attr)
+	}
+	if !sa.Sensitive {
+		t.Error("credentials attribute must be marked Sensitive: true")
+	}
 }

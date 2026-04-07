@@ -1,6 +1,11 @@
 package provider
 
 import (
+	"context"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -126,6 +131,54 @@ func TestConvertToFirestoreValue_roundTrip(t *testing.T) {
 	}
 	if recovered["active"] != true {
 		t.Errorf("active round-trip failed: got %v", recovered["active"])
+	}
+}
+
+func TestDoHTTPRequest_retryThenSucceed(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		if n < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"ok":true}`)
+	}))
+	defer srv.Close()
+
+	status, body, err := doHTTPRequest(context.Background(), srv.Client(), "GET", srv.URL, nil, nil)
+	if err != nil {
+		t.Fatalf("expected success after retry, got error: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Errorf("expected 200, got %d", status)
+	}
+	if string(body) != `{"ok":true}` {
+		t.Errorf("unexpected body: %s", body)
+	}
+	if calls.Load() != 3 {
+		t.Errorf("expected 3 calls, got %d", calls.Load())
+	}
+}
+
+func TestDoHTTPRequest_exhaustedRetry(t *testing.T) {
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer srv.Close()
+
+	status, _, err := doHTTPRequest(context.Background(), srv.Client(), "GET", srv.URL, nil, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status != http.StatusTooManyRequests {
+		t.Errorf("expected status %d after exhausted retries, got %d", http.StatusTooManyRequests, status)
+	}
+	if calls.Load() != 4 {
+		t.Errorf("expected 4 attempts, got %d", calls.Load())
 	}
 }
 

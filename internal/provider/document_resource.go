@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-log/tflog"
 )
@@ -87,6 +88,7 @@ func (r *DocumentResource) Schema(ctx context.Context, req resource.SchemaReques
 			"fields": schema.StringAttribute{
 				Description: "JSON string of document fields.",
 				Required:    true,
+				Validators:  []validator.String{jsonStringValidator{}},
 			},
 			"name": schema.StringAttribute{
 				Description: "The full document resource name.",

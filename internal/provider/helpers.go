@@ -9,7 +9,33 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 )
+
+type jsonStringValidator struct{}
+
+func (v jsonStringValidator) Description(_ context.Context) string {
+	return "value must be a valid JSON object"
+}
+
+func (v jsonStringValidator) MarkdownDescription(_ context.Context) string {
+	return v.Description(context.Background())
+}
+
+func (v jsonStringValidator) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal([]byte(req.ConfigValue.ValueString()), &m); err != nil {
+		resp.Diagnostics.AddAttributeError(
+			req.Path,
+			"Invalid JSON",
+			fmt.Sprintf("The fields value must be a valid JSON object: %s", err),
+		)
+	}
+}
 
 func firestoreFieldsToStringMap(fields map[string]interface{}) map[string]string {
 	result := make(map[string]string)

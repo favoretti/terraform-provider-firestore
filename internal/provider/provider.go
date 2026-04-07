@@ -179,6 +179,23 @@ func (p *FirestoreProvider) Configure(ctx context.Context, req provider.Configur
 		tokenSource = creds.TokenSource
 	}
 
+	// Warn when impersonation is requested but no explicit credentials were provided.
+	// The impersonation call will use ADC, which may fail non-obviously if ADC is not
+	// authorized to generate tokens for the target service account.
+	if impersonateServiceAccount != "" && credentials == "" {
+		resp.Diagnostics.AddWarning(
+			"Impersonation without explicit credentials",
+			fmt.Sprintf(
+				"impersonate_service_account is set to %q but no credentials were configured. "+
+					"Impersonation will use Application Default Credentials. "+
+					"If ADC does not have the roles/iam.serviceAccountTokenCreator role on %q, "+
+					"all API calls will fail. Set the credentials attribute or GOOGLE_CREDENTIALS "+
+					"environment variable to suppress this warning.",
+				impersonateServiceAccount, impersonateServiceAccount,
+			),
+		)
+	}
+
 	// Wrap token source with impersonation if configured
 	if impersonateServiceAccount != "" {
 		impersonateTS, err := impersonate.CredentialsTokenSource(context.Background(), impersonate.CredentialsConfig{

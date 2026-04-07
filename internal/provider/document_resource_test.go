@@ -280,3 +280,89 @@ func testAccDeleteFirestoreDocument(t *testing.T, project, database, collection,
 		t.Fatalf("unexpected status %d deleting document %s/%s", resp.StatusCode, collection, docID)
 	}
 }
+
+func TestAccDocumentResource_forceNew_documentID(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: providerConfig() + `
+resource "firestore_document" "test" {
+  collection  = "tf-acc-test"
+  document_id = "forcenew-docid-v1"
+  fields      = jsonencode({ name = "v1" })
+}`,
+			},
+			{
+				Config: providerConfig() + `
+resource "firestore_document" "test" {
+  collection  = "tf-acc-test"
+  document_id = "forcenew-docid-v2"
+  fields      = jsonencode({ name = "v1" })
+}`,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("firestore_document.test", plancheck.ResourceActionReplace),
+					},
+				},
+			},
+		},
+	})
+}
+
+func TestAccDocumentResource_forceNew_database(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+provider "firestore" { database = "(default)" }
+resource "firestore_document" "test" {
+  collection  = "tf-acc-test"
+  document_id = "forcenew-db-test"
+  fields      = jsonencode({ name = "db-test" })
+}`,
+			},
+			{
+				Config: `
+provider "firestore" { database = "(default)" }
+resource "firestore_document" "test" {
+  collection  = "tf-acc-test"
+  document_id = "forcenew-db-test"
+  database    = "(default)"
+  fields      = jsonencode({ name = "db-test" })
+}`,
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("firestore_document.test", plancheck.ResourceActionReplace),
+					},
+				},
+			},
+		},
+	})
+}
+
+func TestAccDocumentResource_databaseDefault(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: providerConfig() + `
+resource "firestore_document" "test" {
+  collection  = "tf-acc-test"
+  document_id = "db-default-test"
+  fields      = jsonencode({ name = "default-db" })
+}`,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("firestore_document.test",
+						tfjsonpath.New("database"),
+						knownvalue.StringExact("(default)"),
+					),
+				},
+			},
+		},
+	})
+}
