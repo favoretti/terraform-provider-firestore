@@ -84,11 +84,10 @@ func (d *DocumentDataSource) Schema(ctx context.Context, req datasource.SchemaRe
 				Description: "The time the document was last updated.",
 				Computed:    true,
 			},
-		},
-		Blocks: map[string]schema.Block{
-			"where": schema.ListNestedBlock{
-				Description: "Filter conditions for the query. Used when document_id is not specified. Multiple where blocks are combined with AND.",
-				NestedObject: schema.NestedBlockObject{
+			"where": schema.ListNestedAttribute{
+				Description: "Filter conditions for the query. Used when document_id is not specified. Multiple entries are combined with AND.",
+				Optional:    true,
+				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"field": schema.StringAttribute{
 							Description: "The field path to filter on.",

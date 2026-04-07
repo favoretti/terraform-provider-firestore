@@ -50,11 +50,11 @@ resource "firestore_document" "seed" {
 
 data "firestore_document" "test" {
   collection = "tf-acc-test"
-  where {
+  where = [{
     field    = "marker"
     operator = "EQUAL"
     value    = "where-single"
-  }
+  }]
   depends_on = [firestore_document.seed]
 }`,
 				Check: resource.ComposeTestCheckFunc(
@@ -81,16 +81,10 @@ resource "firestore_document" "seed" {
 
 data "firestore_document" "test" {
   collection = "tf-acc-test"
-  where {
-    field    = "role"
-    operator = "EQUAL"
-    value    = "admin"
-  }
-  where {
-    field    = "status"
-    operator = "EQUAL"
-    value    = "active"
-  }
+  where = [
+    { field = "role",   operator = "EQUAL", value = "admin" },
+    { field = "status", operator = "EQUAL", value = "active" },
+  ]
   depends_on = [firestore_document.seed]
 }`,
 				Check: resource.ComposeTestCheckFunc(
@@ -111,11 +105,11 @@ func TestAccDocumentDataSource_byWhere_noMatch(t *testing.T) {
 				Config: providerConfig() + `
 data "firestore_document" "test" {
   collection = "tf-acc-test"
-  where {
+  where = [{
     field    = "marker"
     operator = "EQUAL"
     value    = "this-value-does-not-exist-in-any-document"
-  }
+  }]
 }`,
 				ExpectError: regexp.MustCompile(`(?i)no document|not found`),
 			},
@@ -150,11 +144,11 @@ func TestAccDocumentDataSource_invalidOperator(t *testing.T) {
 				Config: providerConfig() + `
 data "firestore_document" "test" {
   collection = "tf-acc-test"
-  where {
+  where = [{
     field    = "status"
     operator = "INVALID_OPERATOR"
     value    = "active"
-  }
+  }]
 }`,
 				ExpectError: regexp.MustCompile(`.`),
 			},

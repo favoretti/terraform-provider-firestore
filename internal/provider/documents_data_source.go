@@ -138,11 +138,10 @@ func (d *DocumentsDataSource) Schema(ctx context.Context, req datasource.SchemaR
 					},
 				},
 			},
-		},
-		Blocks: map[string]schema.Block{
-			"where": schema.ListNestedBlock{
-				Description: "Filter conditions for the query.",
-				NestedObject: schema.NestedBlockObject{
+			"where": schema.ListNestedAttribute{
+				Description: "Filter conditions for the query. Multiple entries are combined with AND.",
+				Optional:    true,
+				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"field": schema.StringAttribute{
 							Description: "The field path to filter on.",
@@ -159,9 +158,10 @@ func (d *DocumentsDataSource) Schema(ctx context.Context, req datasource.SchemaR
 					},
 				},
 			},
-			"order_by": schema.ListNestedBlock{
+			"order_by": schema.ListNestedAttribute{
 				Description: "Ordering for the query results.",
-				NestedObject: schema.NestedBlockObject{
+				Optional:    true,
+				NestedObject: schema.NestedAttributeObject{
 					Attributes: map[string]schema.Attribute{
 						"field": schema.StringAttribute{
 							Description: "The field path to order by.",

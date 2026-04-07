@@ -57,11 +57,11 @@ resource "firestore_document" "nomatch" {
 }
 data "firestore_documents" "test" {
   collection = "tf-acc-test-where"
-  where {
+  where = [{
     field    = "env"
     operator = "EQUAL"
     value    = "test"
-  }
+  }]
   depends_on = [firestore_document.match, firestore_document.nomatch]
 }`,
 				Check: resource.ComposeTestCheckFunc(
@@ -92,16 +92,10 @@ resource "firestore_document" "one" {
 }
 data "firestore_documents" "test" {
   collection = "tf-acc-test-multi-where"
-  where {
-    field    = "role"
-    operator = "EQUAL"
-    value    = "admin"
-  }
-  where {
-    field    = "status"
-    operator = "EQUAL"
-    value    = "active"
-  }
+  where = [
+    { field = "role",   operator = "EQUAL", value = "admin" },
+    { field = "status", operator = "EQUAL", value = "active" },
+  ]
   depends_on = [firestore_document.both, firestore_document.one]
 }`,
 				Check: resource.ComposeTestCheckFunc(
@@ -182,11 +176,11 @@ func TestAccDocumentsDataSource_invalidOperator(t *testing.T) {
 				Config: providerConfig() + `
 data "firestore_documents" "test" {
   collection = "tf-acc-test"
-  where {
+  where = [{
     field    = "status"
     operator = "INVALID_OPERATOR"
     value    = "active"
-  }
+  }]
 }`,
 				ExpectError: regexp.MustCompile(`.`),
 			},
@@ -205,10 +199,10 @@ func TestAccDocumentsDataSource_invalidDirection(t *testing.T) {
 				Config: providerConfig() + `
 data "firestore_documents" "test" {
   collection = "tf-acc-test"
-  order_by {
+  order_by = [{
     field     = "name"
     direction = "SIDEWAYS"
-  }
+  }]
 }`,
 				ExpectError: regexp.MustCompile(`.`),
 			},
