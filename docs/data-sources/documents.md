@@ -6,7 +6,7 @@ description: |-
 
 # firestore_documents (Data Source)
 
-Lists documents in a Firestore collection with optional filtering, ordering, and pagination.
+Lists documents in a Firestore collection with optional filtering, ordering, and field projection. Automatically paginates large collections.
 
 ## Example Usage
 
@@ -27,11 +27,11 @@ output "user_count" {
 ```hcl
 data "firestore_documents" "active_users" {
   collection = "users"
-  where = [{
+  where {
     field    = "active"
     operator = "EQUAL"
     value    = jsonencode(true)
-  }]
+  }
 }
 ```
 
@@ -40,10 +40,16 @@ data "firestore_documents" "active_users" {
 ```hcl
 data "firestore_documents" "premium_active_users" {
   collection = "users"
-  where = [
-    { field = "active", operator = "EQUAL", value = jsonencode(true) },
-    { field = "tier",   operator = "EQUAL", value = "premium" },
-  ]
+  where {
+    field    = "active"
+    operator = "EQUAL"
+    value    = jsonencode(true)
+  }
+  where {
+    field    = "tier"
+    operator = "EQUAL"
+    value    = "premium"
+  }
 }
 ```
 
@@ -52,48 +58,48 @@ data "firestore_documents" "premium_active_users" {
 ```hcl
 data "firestore_documents" "recent_orders" {
   collection = "orders"
-  order_by = [{
+  order_by {
     field     = "created_at"
     direction = "DESCENDING"
-  }]
+  }
   limit = 10
 }
 ```
 
-### Complex Query
+### Field Projection
 
 ```hcl
-data "firestore_documents" "filtered_users" {
-  collection = "users"
-  where = [{
-    field    = "age"
-    operator = "GREATER_THAN_OR_EQUAL"
-    value    = jsonencode(18)
-  }]
-  order_by = [
-    { field = "age",  direction = "ASCENDING" },
-    { field = "name", direction = "ASCENDING" },
-  ]
-  limit = 100
+data "firestore_documents" "network_names" {
+  collection = "network"
+  select     = ["name", "document_type", "environment"]
 }
 ```
 
-### Use Results with for_each
+### Custom Map Key
+
+```hcl
+data "firestore_documents" "apps" {
+  collection = "fcp-app-onboarding"
+  map_key    = "name"
+}
+
+resource "some_resource" "app" {
+  for_each = data.firestore_documents.apps.documents_map
+  name     = each.key                            # e.g., "fcp-app-example"
+  eai      = each.value.fields_map["eai"]        # e.g., "9998002"
+  email    = each.value.fields_map["group_email"]
+}
+```
+
+### Using fields_map with Complex Types
 
 ```hcl
 data "firestore_documents" "networks" {
-  collection = "configs"
-  where = [{
-    field    = "type"
-    operator = "EQUAL"
-    value    = "network"
-  }]
+  collection = "network"
 }
 
-resource "some_resource" "net" {
-  for_each = data.firestore_documents.networks.documents_map
-  name     = each.key
-  cidr     = each.value.fields_map["cidr"]
+output "first_location" {
+  value = jsondecode(data.firestore_documents.networks.documents[0].fields_map["location"])
 }
 ```
 
@@ -107,12 +113,14 @@ resource "some_resource" "net" {
 
 - `project` (String) - The GCP project ID. Overrides the provider project.
 - `database` (String) - The Firestore database ID. Overrides the provider database.
-- `limit` (Number) - Maximum number of documents to return.
-- `where` (List of Object) - Filter conditions. Multiple entries are combined with AND. Each entry contains:
+- `limit` (Number) - Maximum number of documents to return. Must be at least 1.
+- `select` (List of String) - List of field paths to return. If omitted, all fields are returned. Must contain at least one entry.
+- `map_key` (String) - Field name to use as the key for `documents_map`. Defaults to `document_id`. The specified field must exist and have a unique, non-empty value in every returned document.
+- `where` (Block List) - Filter conditions. Multiple blocks are combined with AND. Each block contains:
   - `field` (String, Required) - The field path to filter on.
   - `operator` (String, Required) - The comparison operator. Valid values: `EQUAL`, `NOT_EQUAL`, `LESS_THAN`, `LESS_THAN_OR_EQUAL`, `GREATER_THAN`, `GREATER_THAN_OR_EQUAL`, `ARRAY_CONTAINS`, `IN`, `ARRAY_CONTAINS_ANY`, `NOT_IN`.
   - `value` (String, Required) - The value to compare against. Plain strings can be passed as-is. Use `jsonencode()` for booleans, numbers, arrays, or objects.
-- `order_by` (List of Object) - Ordering for query results. Each entry contains:
+- `order_by` (Block List) - Ordering for query results. Each block contains:
   - `field` (String, Required) - The field path to order by.
   - `direction` (String, Optional) - The sort direction. Valid values: `ASCENDING` (default), `DESCENDING`.
 
@@ -121,7 +129,11 @@ resource "some_resource" "net" {
 - `documents` (List of Object) - List of documents in the collection. Each entry contains:
   - `document_id` (String) - The document ID.
   - `fields` (String) - JSON string of all document fields.
-  - `fields_map` (Map of String) - Top-level string-valued fields as a map. Non-string and nested fields are omitted.
+  - `fields_map` (Map of String) - Top-level fields serialized as strings. Complex values (maps, arrays, geopoints) are JSON-encoded.
   - `create_time` (String) - The time the document was created.
   - `update_time` (String) - The time the document was last updated.
-- `documents_map` (Map of Object) - Documents indexed by `document_id`, for use with `for_each`. Each entry has the same shape as a `documents` list entry.
+- `documents_map` (Map of Object) - Documents indexed by `document_id` (or by the field specified in `map_key`), for use with `for_each`. Each entry has the same shape as a `documents` list entry.
+
+## Pagination
+
+The data source automatically paginates through large collections. Collections with more than 300 documents are fetched across multiple API calls. A safety cap of 100 pages (30,000 documents) is enforced; if exceeded, a warning diagnostic is emitted and partial results are returned. Use `where` filters or `limit` to reduce the result set for very large collections.

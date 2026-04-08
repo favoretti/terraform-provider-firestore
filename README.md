@@ -90,10 +90,17 @@ resource "firestore_document" "order" {
 ### Reading Documents
 
 ```hcl
-# Read a single document
+# Read a single document by ID
 data "firestore_document" "user" {
   collection  = "users"
   document_id = "user-123"
+}
+
+# Read a single document with field projection
+data "firestore_document" "user_name" {
+  collection  = "users"
+  document_id = "user-123"
+  select      = ["name", "email"]
 }
 
 # List all documents in a collection
@@ -101,14 +108,15 @@ data "firestore_documents" "all_users" {
   collection = "users"
 }
 
-# Query with filters
+# Query with filters, ordering, and field projection
 data "firestore_documents" "active_users" {
   collection = "users"
+  select     = ["name", "email", "status"]
 
   where {
     field    = "status"
     operator = "EQUAL"
-    value    = jsonencode("active")
+    value    = "active"
   }
 
   order_by {
@@ -117,6 +125,18 @@ data "firestore_documents" "active_users" {
   }
 
   limit = 100
+}
+
+# Use map_key for meaningful for_each keys
+data "firestore_documents" "apps" {
+  collection = "fcp-app-onboarding"
+  map_key    = "name"
+}
+
+resource "some_resource" "app" {
+  for_each = data.firestore_documents.apps.documents_map
+  name     = each.key
+  eai      = each.value.fields_map["eai"]
 }
 ```
 
@@ -156,23 +176,27 @@ terraform import firestore_document.example collection/document_id
 
 ### firestore_document
 
-Retrieves a single Firestore document.
+Retrieves a single Firestore document by ID.
 
 #### Arguments
 
 - `collection` (Required) - Collection path
 - `document_id` (Required) - Document ID
+- `select` (Optional) - List of field paths to return
+- `project` (Optional) - GCP project. Overrides provider setting.
+- `database` (Optional) - Firestore database ID. Overrides provider setting.
 
 #### Attributes
 
 - `fields` - JSON string of document fields
+- `fields_map` - Top-level fields serialized as strings. Complex values (maps, arrays, geopoints) are JSON-encoded.
 - `name` - Full document resource name
 - `create_time` - Document creation timestamp
 - `update_time` - Document last update timestamp
 
 ### firestore_documents
 
-Lists documents in a collection with optional filtering.
+Lists documents in a collection with optional filtering. Automatically paginates large collections.
 
 #### Arguments
 
@@ -185,14 +209,20 @@ Lists documents in a collection with optional filtering.
   - `field` - Field path to order by
   - `direction` - ASCENDING or DESCENDING
 - `limit` (Optional) - Maximum documents to return
+- `select` (Optional) - List of field paths to return
+- `map_key` (Optional) - Field name to key documents_map by (defaults to document_id)
+- `project` (Optional) - GCP project. Overrides provider setting.
+- `database` (Optional) - Firestore database ID. Overrides provider setting.
 
 #### Attributes
 
 - `documents` - List of documents, each containing:
   - `document_id` - Document ID
   - `fields` - JSON string of fields
+  - `fields_map` - Top-level fields serialized as strings. Complex values are JSON-encoded.
   - `create_time` - Creation timestamp
   - `update_time` - Update timestamp
+- `documents_map` - Documents indexed by `document_id` (or `map_key` field), for use with `for_each`
 
 ## Development
 

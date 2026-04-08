@@ -1,16 +1,16 @@
 ---
 page_title: "firestore_document Data Source"
 description: |-
-  Retrieves a single Firestore document by ID or by filter conditions.
+  Retrieves a single Firestore document by ID.
 ---
 
 # firestore_document (Data Source)
 
-Retrieves a single Firestore document. Use `document_id` for a direct lookup, or `where` to find the first document matching one or more field conditions.
+Retrieves a single Firestore document by its document ID.
 
 ## Example Usage
 
-### Lookup by Document ID
+### Basic Lookup
 
 ```hcl
 data "firestore_document" "user" {
@@ -23,32 +23,30 @@ output "user_name" {
 }
 ```
 
-### Lookup by Field Value
+### Using fields_map
 
 ```hcl
-data "firestore_document" "user" {
-  collection = "users"
-  where = [{
-    field    = "email"
-    operator = "EQUAL"
-    value    = "alice@example.com"
-  }]
+data "firestore_document" "app" {
+  collection  = "fcp-app-onboarding"
+  document_id = "app-123"
 }
 
-output "user_name" {
-  value = data.firestore_document.user.fields_map["display_name"]
+output "app_eai" {
+  value = data.firestore_document.app.fields_map["eai"]
+}
+
+output "app_location" {
+  value = jsondecode(data.firestore_document.app.fields_map["location"])
 }
 ```
 
-### Multiple Filter Conditions (AND)
+### Field Projection
 
 ```hcl
-data "firestore_document" "active_admin" {
-  collection = "users"
-  where = [
-    { field = "role",   operator = "EQUAL", value = "admin" },
-    { field = "active", operator = "EQUAL", value = jsonencode(true) },
-  ]
+data "firestore_document" "user" {
+  collection  = "users"
+  document_id = "user-123"
+  select      = ["name", "email"]
 }
 ```
 
@@ -66,22 +64,18 @@ data "firestore_document" "order" {
 ### Required
 
 - `collection` (String) - The collection path (e.g., `"users"` or `"users/123/orders"`).
+- `document_id` (String) - The document ID to retrieve.
 
 ### Optional
 
 - `project` (String) - The GCP project ID. Overrides the provider project.
 - `database` (String) - The Firestore database ID. Overrides the provider database.
-- `document_id` (String) - The document ID to retrieve. Mutually exclusive with `where`.
-- `where` (List of Object) - Filter conditions. The first matching document is returned. Multiple entries are combined with AND. Requires at least one entry when `document_id` is not set. Each entry contains:
-  - `field` (String, Required) - The field path to filter on.
-  - `operator` (String, Required) - The comparison operator. Valid values: `EQUAL`, `NOT_EQUAL`, `LESS_THAN`, `LESS_THAN_OR_EQUAL`, `GREATER_THAN`, `GREATER_THAN_OR_EQUAL`, `ARRAY_CONTAINS`, `IN`, `ARRAY_CONTAINS_ANY`, `NOT_IN`.
-  - `value` (String, Required) - The value to compare against. Plain strings can be passed as-is. Use `jsonencode()` for booleans, numbers, arrays, or objects.
+- `select` (List of String) - List of field paths to return. If omitted, all fields are returned. Must contain at least one entry.
 
 ### Read-Only
 
-- `document_id` (String) - The document ID. Populated from the matched document when using `where`.
 - `fields` (String) - JSON string of all document fields.
-- `fields_map` (Map of String) - Top-level string-valued fields as a map. Non-string and nested fields are omitted.
+- `fields_map` (Map of String) - Top-level fields serialized as strings. Complex values (maps, arrays, geopoints) are JSON-encoded.
 - `name` (String) - The full document resource name.
 - `create_time` (String) - The time the document was created.
 - `update_time` (String) - The time the document was last updated.
