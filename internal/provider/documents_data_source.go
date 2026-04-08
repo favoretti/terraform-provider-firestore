@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -30,6 +32,7 @@ type DocumentsDataSourceModel struct {
 	Where        types.List   `tfsdk:"where"`
 	OrderBy      types.List   `tfsdk:"order_by"`
 	Limit        types.Int64  `tfsdk:"limit"`
+	Select       types.List   `tfsdk:"select"`
 	Documents    types.List   `tfsdk:"documents"`
 	DocumentsMap types.Map    `tfsdk:"documents_map"`
 }
@@ -87,6 +90,14 @@ func (d *DocumentsDataSource) Schema(ctx context.Context, req datasource.SchemaR
 					int64validator.AtLeast(1),
 				},
 			},
+			"select": schema.ListAttribute{
+				ElementType: types.StringType,
+				Optional:    true,
+				Description: "List of field paths to return. If omitted, all fields are returned.",
+				Validators: []validator.List{
+					listvalidator.SizeAtLeast(1),
+				},
+			},
 			"documents": schema.ListNestedAttribute{
 				Description: "List of documents in the collection.",
 				Computed:    true,
@@ -103,7 +114,7 @@ func (d *DocumentsDataSource) Schema(ctx context.Context, req datasource.SchemaR
 						"fields_map": schema.MapAttribute{
 							ElementType: types.StringType,
 							Computed:    true,
-							Description: "Top-level string-valued fields as a map. Non-string and nested fields are omitted.",
+							Description: "Top-level fields serialized as strings. Complex values (maps, arrays, geopoints) are JSON-encoded.",
 						},
 						"create_time": schema.StringAttribute{
 							Description: "The time the document was created.",
@@ -132,7 +143,7 @@ func (d *DocumentsDataSource) Schema(ctx context.Context, req datasource.SchemaR
 						"fields_map": schema.MapAttribute{
 							ElementType: types.StringType,
 							Computed:    true,
-							Description: "Top-level string-valued fields as a map. Non-string and nested fields are omitted.",
+							Description: "Top-level fields serialized as strings. Complex values (maps, arrays, geopoints) are JSON-encoded.",
 						},
 						"create_time": schema.StringAttribute{
 							Description: "The time the document was created.",
@@ -252,6 +263,14 @@ func (d *DocumentsDataSource) Read(ctx context.Context, req datasource.ReadReque
 		}
 	}
 
+	var selectFields []string
+	if !data.Select.IsNull() && !data.Select.IsUnknown() {
+		resp.Diagnostics.Append(data.Select.ElementsAs(ctx, &selectFields, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
 	hasFilters := len(whereConditions) > 0 || len(orderByConditions) > 0 || !data.Limit.IsNull()
 
 	var documents []DocumentResult
@@ -259,9 +278,9 @@ func (d *DocumentsDataSource) Read(ctx context.Context, req datasource.ReadReque
 
 	if hasFilters {
 		documents, diags = d.runStructuredQuery(ctx, project, database, data.Collection.ValueString(),
-			whereConditions, orderByConditions, data.Limit)
+			whereConditions, orderByConditions, data.Limit, selectFields)
 	} else {
-		documents, diags = d.listDocuments(ctx, project, database, data.Collection.ValueString())
+		documents, diags = d.listDocuments(ctx, project, database, data.Collection.ValueString(), selectFields)
 	}
 
 	resp.Diagnostics.Append(diags...)
@@ -320,62 +339,94 @@ func (d *DocumentsDataSource) Read(ctx context.Context, req datasource.ReadReque
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }
 
-func (d *DocumentsDataSource) listDocuments(ctx context.Context, project, database, collection string) ([]DocumentResult, diag.Diagnostics) {
+func (d *DocumentsDataSource) listDocuments(ctx context.Context, project, database, collection string, selectFields []string) ([]DocumentResult, diag.Diagnostics) {
 	var diags diag.Diagnostics
+	const (
+		pageSize = 300
+		maxPages = 100
+	)
 
-	reqURL := fmt.Sprintf("https://firestore.googleapis.com/v1/projects/%s/databases/%s/documents/%s",
+	baseURL := fmt.Sprintf("https://firestore.googleapis.com/v1/projects/%s/databases/%s/documents/%s",
 		project, database, collection)
 
-	tflog.Debug(ctx, "Listing Firestore documents", map[string]interface{}{
-		"url": reqURL,
-	})
+	var allDocuments []DocumentResult
+	pageToken := ""
 
-	statusCode, respBody, err := doHTTPRequest(ctx, d.client.HTTPClient, "GET", reqURL, nil, nil)
-	if err != nil {
-		diags.AddError("Error listing documents", err.Error())
-		return nil, diags
-	}
+	for page := 0; page < maxPages; page++ {
+		params := url.Values{}
+		params.Set("pageSize", fmt.Sprintf("%d", pageSize))
+		if pageToken != "" {
+			params.Set("pageToken", pageToken)
+		}
+		for _, f := range selectFields {
+			params.Add("mask.fieldPaths", f)
+		}
+		reqURL := baseURL + "?" + params.Encode()
 
-	if statusCode != http.StatusOK {
-		diags.AddError("API error", fmt.Sprintf("API returned status %d: %s", statusCode, string(respBody)))
-		return nil, diags
-	}
+		tflog.Debug(ctx, "Listing Firestore documents", map[string]interface{}{
+			"url":  reqURL,
+			"page": page,
+		})
 
-	var listResp struct {
-		Documents []FirestoreDocument `json:"documents"`
-	}
-	if err := json.Unmarshal(respBody, &listResp); err != nil {
-		diags.AddError("Error parsing response", err.Error())
-		return nil, diags
-	}
-
-	documents := make([]DocumentResult, len(listResp.Documents))
-	for i, doc := range listResp.Documents {
-		fieldsJSON, err := firestoreFieldsToJSON(doc.Fields)
+		statusCode, respBody, err := doHTTPRequest(ctx, d.client.HTTPClient, "GET", reqURL, nil, nil)
 		if err != nil {
-			diags.AddError("Error converting fields", err.Error())
+			diags.AddError("Error listing documents", err.Error())
 			return nil, diags
 		}
 
-		sm := firestoreFieldsToStringMap(doc.Fields)
-		mapVals := make(map[string]attr.Value, len(sm))
-		for k, v := range sm {
-			mapVals[k] = types.StringValue(v)
+		if statusCode != http.StatusOK {
+			diags.AddError("API error", fmt.Sprintf("API returned status %d: %s", statusCode, string(respBody)))
+			return nil, diags
 		}
-		documents[i] = DocumentResult{
-			DocumentID: types.StringValue(extractDocumentID(doc.Name)),
-			Fields:     types.StringValue(fieldsJSON),
-			FieldsMap:  types.MapValueMust(types.StringType, mapVals),
-			CreateTime: types.StringValue(doc.CreateTime),
-			UpdateTime: types.StringValue(doc.UpdateTime),
+
+		var listResp struct {
+			Documents     []FirestoreDocument `json:"documents"`
+			NextPageToken string              `json:"nextPageToken"`
 		}
+		if err := json.Unmarshal(respBody, &listResp); err != nil {
+			diags.AddError("Error parsing response", err.Error())
+			return nil, diags
+		}
+
+		for _, doc := range listResp.Documents {
+			fieldsJSON, err := firestoreFieldsToJSON(doc.Fields)
+			if err != nil {
+				diags.AddError("Error converting fields", err.Error())
+				return nil, diags
+			}
+
+			sm := firestoreFieldsToStringMap(doc.Fields)
+			mapVals := make(map[string]attr.Value, len(sm))
+			for k, v := range sm {
+				mapVals[k] = types.StringValue(v)
+			}
+			allDocuments = append(allDocuments, DocumentResult{
+				DocumentID: types.StringValue(extractDocumentID(doc.Name)),
+				Fields:     types.StringValue(fieldsJSON),
+				FieldsMap:  types.MapValueMust(types.StringType, mapVals),
+				CreateTime: types.StringValue(doc.CreateTime),
+				UpdateTime: types.StringValue(doc.UpdateTime),
+			})
+		}
+
+		if listResp.NextPageToken == "" {
+			break
+		}
+		pageToken = listResp.NextPageToken
 	}
 
-	return documents, diags
+	if pageToken != "" {
+		diags.AddWarning(
+			"Results may be incomplete",
+			fmt.Sprintf("Reached maximum page limit (%d pages, %d documents). Consider using where filters or limit to reduce the result set.", maxPages, len(allDocuments)),
+		)
+	}
+
+	return allDocuments, diags
 }
 
 func (d *DocumentsDataSource) runStructuredQuery(ctx context.Context, project, database, collection string,
-	whereConditions []WhereCondition, orderByConditions []OrderByCondition, limit types.Int64) ([]DocumentResult, diag.Diagnostics) {
+	whereConditions []WhereCondition, orderByConditions []OrderByCondition, limit types.Int64, selectFields []string) ([]DocumentResult, diag.Diagnostics) {
 
 	var diags diag.Diagnostics
 
@@ -411,6 +462,14 @@ func (d *DocumentsDataSource) runStructuredQuery(ctx context.Context, project, d
 
 	if !limit.IsNull() {
 		query["limit"] = limit.ValueInt64()
+	}
+
+	if len(selectFields) > 0 {
+		fields := make([]map[string]interface{}, len(selectFields))
+		for i, f := range selectFields {
+			fields[i] = map[string]interface{}{"fieldPath": f}
+		}
+		query["select"] = map[string]interface{}{"fields": fields}
 	}
 
 	bodyBytes, err := json.Marshal(map[string]interface{}{"structuredQuery": query})

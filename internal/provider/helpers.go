@@ -44,15 +44,64 @@ func firestoreFieldsToStringMap(fields map[string]interface{}) map[string]string
 		if !ok {
 			continue
 		}
-		sv, ok := fieldMap["stringValue"]
-		if !ok {
-			continue
+
+		if sv, ok := fieldMap["stringValue"]; ok {
+			if s, ok := sv.(string); ok {
+				result[k] = s
+			}
+		} else if iv, ok := fieldMap["integerValue"]; ok {
+			switch n := iv.(type) {
+			case string:
+				result[k] = n
+			case float64:
+				result[k] = fmt.Sprintf("%d", int64(n))
+			}
+		} else if dv, ok := fieldMap["doubleValue"]; ok {
+			if d, ok := dv.(float64); ok {
+				result[k] = fmt.Sprintf("%g", d)
+			}
+		} else if bv, ok := fieldMap["booleanValue"]; ok {
+			if b, ok := bv.(bool); ok {
+				result[k] = fmt.Sprintf("%t", b)
+			}
+		} else if _, ok := fieldMap["nullValue"]; ok {
+			result[k] = ""
+		} else if tv, ok := fieldMap["timestampValue"]; ok {
+			if s, ok := tv.(string); ok {
+				result[k] = s
+			}
+		} else if rv, ok := fieldMap["referenceValue"]; ok {
+			if s, ok := rv.(string); ok {
+				result[k] = s
+			}
+		} else if bv, ok := fieldMap["bytesValue"]; ok {
+			if s, ok := bv.(string); ok {
+				result[k] = s
+			}
+		} else if gv, ok := fieldMap["geoPointValue"]; ok {
+			if b, err := json.Marshal(gv); err == nil {
+				result[k] = string(b)
+			}
+		} else if mv, ok := fieldMap["mapValue"]; ok {
+			if mvMap, ok := mv.(map[string]interface{}); ok {
+				nestedFields, _ := mvMap["fields"].(map[string]interface{})
+				converted := convertFromFirestoreFields(nestedFields)
+				if b, err := json.Marshal(converted); err == nil {
+					result[k] = string(b)
+				}
+			}
+		} else if av, ok := fieldMap["arrayValue"]; ok {
+			if avMap, ok := av.(map[string]interface{}); ok {
+				values, _ := avMap["values"].([]interface{})
+				items := make([]interface{}, len(values))
+				for i, elem := range values {
+					items[i] = convertFromFirestoreValue(elem)
+				}
+				if b, err := json.Marshal(items); err == nil {
+					result[k] = string(b)
+				}
+			}
 		}
-		s, ok := sv.(string)
-		if !ok {
-			continue
-		}
-		result[k] = s
 	}
 	return result
 }

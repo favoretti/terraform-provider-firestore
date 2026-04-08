@@ -14,7 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
 
-func TestFirestoreFieldsToStringMap_onlyStrings(t *testing.T) {
+func TestFirestoreFieldsToStringMap_mixedTypes(t *testing.T) {
 	fields := map[string]interface{}{
 		"name":   map[string]interface{}{"stringValue": "alice"},
 		"age":    map[string]interface{}{"integerValue": "30"},
@@ -24,11 +24,101 @@ func TestFirestoreFieldsToStringMap_onlyStrings(t *testing.T) {
 
 	result := firestoreFieldsToStringMap(fields)
 
-	if len(result) != 1 {
-		t.Errorf("expected 1 entry, got %d: %v", len(result), result)
+	if len(result) != 4 {
+		t.Errorf("expected 4 entries, got %d: %v", len(result), result)
 	}
 	if result["name"] != "alice" {
 		t.Errorf("expected name=alice, got %q", result["name"])
+	}
+	if result["age"] != "30" {
+		t.Errorf("expected age=30, got %q", result["age"])
+	}
+	if result["active"] != "true" {
+		t.Errorf("expected active=true, got %q", result["active"])
+	}
+	if result["meta"] != "{}" {
+		t.Errorf("expected meta={}, got %q", result["meta"])
+	}
+}
+
+func TestFirestoreFieldsToStringMap_allTypes(t *testing.T) {
+	fields := map[string]interface{}{
+		"str":   map[string]interface{}{"stringValue": "hello"},
+		"int":   map[string]interface{}{"integerValue": "42"},
+		"dbl":   map[string]interface{}{"doubleValue": 3.14},
+		"bool":  map[string]interface{}{"booleanValue": true},
+		"null":  map[string]interface{}{"nullValue": nil},
+		"ts":    map[string]interface{}{"timestampValue": "2024-01-01T00:00:00Z"},
+		"ref":   map[string]interface{}{"referenceValue": "projects/p/databases/d/documents/c/doc1"},
+		"bytes": map[string]interface{}{"bytesValue": "SGVsbG8="},
+		"geo":   map[string]interface{}{"geoPointValue": map[string]interface{}{"latitude": 33.7, "longitude": -84.4}},
+		"map": map[string]interface{}{"mapValue": map[string]interface{}{"fields": map[string]interface{}{
+			"nested": map[string]interface{}{"stringValue": "value"},
+		}}},
+		"arr": map[string]interface{}{"arrayValue": map[string]interface{}{"values": []interface{}{
+			map[string]interface{}{"stringValue": "a"},
+			map[string]interface{}{"stringValue": "b"},
+		}}},
+	}
+
+	result := firestoreFieldsToStringMap(fields)
+
+	if len(result) != 11 {
+		t.Fatalf("expected 11 entries, got %d: %v", len(result), result)
+	}
+
+	expectations := map[string]string{
+		"str":   "hello",
+		"int":   "42",
+		"dbl":   "3.14",
+		"bool":  "true",
+		"null":  "",
+		"ts":    "2024-01-01T00:00:00Z",
+		"ref":   "projects/p/databases/d/documents/c/doc1",
+		"bytes": "SGVsbG8=",
+	}
+	for key, want := range expectations {
+		if result[key] != want {
+			t.Errorf("%s: expected %q, got %q", key, want, result[key])
+		}
+	}
+
+	if result["geo"] != `{"latitude":33.7,"longitude":-84.4}` {
+		t.Errorf("geo: expected latitude/longitude JSON, got %q", result["geo"])
+	}
+	if result["map"] != `{"nested":"value"}` {
+		t.Errorf("map: expected nested map JSON, got %q", result["map"])
+	}
+	if result["arr"] != `["a","b"]` {
+		t.Errorf("arr: expected array JSON, got %q", result["arr"])
+	}
+}
+
+func TestFirestoreFieldsToStringMap_nestedObject(t *testing.T) {
+	fields := map[string]interface{}{
+		"location": map[string]interface{}{"mapValue": map[string]interface{}{"fields": map[string]interface{}{
+			"name": map[string]interface{}{"stringValue": "atl2-zone-940"},
+			"id":   map[string]interface{}{"stringValue": "zone-id-123"},
+		}}},
+	}
+
+	result := firestoreFieldsToStringMap(fields)
+
+	want := `{"id":"zone-id-123","name":"atl2-zone-940"}`
+	if result["location"] != want {
+		t.Errorf("expected %s, got %q", want, result["location"])
+	}
+}
+
+func TestFirestoreFieldsToStringMap_nullValue(t *testing.T) {
+	fields := map[string]interface{}{
+		"missing": map[string]interface{}{"nullValue": nil},
+	}
+
+	result := firestoreFieldsToStringMap(fields)
+
+	if result["missing"] != "" {
+		t.Errorf("expected empty string for nullValue, got %q", result["missing"])
 	}
 }
 

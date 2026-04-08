@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -26,6 +27,7 @@ type DocumentDataSourceModel struct {
 	Database   types.String `tfsdk:"database"`
 	Collection types.String `tfsdk:"collection"`
 	DocumentID types.String `tfsdk:"document_id"`
+	Select     types.List   `tfsdk:"select"`
 	Fields     types.String `tfsdk:"fields"`
 	FieldsMap  types.Map    `tfsdk:"fields_map"`
 	Name       types.String `tfsdk:"name"`
@@ -64,6 +66,14 @@ func (d *DocumentDataSource) Schema(ctx context.Context, req datasource.SchemaRe
 				Description: "The document ID to retrieve.",
 				Required:    true,
 			},
+			"select": schema.ListAttribute{
+				ElementType: types.StringType,
+				Optional:    true,
+				Description: "List of field paths to return. If omitted, all fields are returned.",
+				Validators: []validator.List{
+					listvalidator.SizeAtLeast(1),
+				},
+			},
 			"fields": schema.StringAttribute{
 				Description: "JSON string of document fields.",
 				Computed:    true,
@@ -71,7 +81,7 @@ func (d *DocumentDataSource) Schema(ctx context.Context, req datasource.SchemaRe
 			"fields_map": schema.MapAttribute{
 				ElementType: types.StringType,
 				Computed:    true,
-				Description: "Top-level string-valued fields as a map. Non-string and nested fields are omitted.",
+				Description: "Top-level fields serialized as strings. Complex values (maps, arrays, geopoints) are JSON-encoded.",
 			},
 			"name": schema.StringAttribute{
 				Description: "The full document resource name.",
@@ -123,12 +133,28 @@ func (d *DocumentDataSource) Read(ctx context.Context, req datasource.ReadReques
 		database = data.Database.ValueString()
 	}
 
-	d.readByID(ctx, project, database, data.Collection.ValueString(), data.DocumentID.ValueString(), &data, resp)
+	var selectFields []string
+	if !data.Select.IsNull() && !data.Select.IsUnknown() {
+		resp.Diagnostics.Append(data.Select.ElementsAs(ctx, &selectFields, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
+	d.readByID(ctx, project, database, data.Collection.ValueString(), data.DocumentID.ValueString(), selectFields, &data, resp)
 }
 
-func (d *DocumentDataSource) readByID(ctx context.Context, project, database, collection, documentID string, data *DocumentDataSourceModel, resp *datasource.ReadResponse) {
+func (d *DocumentDataSource) readByID(ctx context.Context, project, database, collection, documentID string, selectFields []string, data *DocumentDataSourceModel, resp *datasource.ReadResponse) {
 	reqURL := fmt.Sprintf("https://firestore.googleapis.com/v1/projects/%s/databases/%s/documents/%s/%s",
 		project, database, collection, documentID)
+
+	if len(selectFields) > 0 {
+		params := url.Values{}
+		for _, f := range selectFields {
+			params.Add("mask.fieldPaths", f)
+		}
+		reqURL += "?" + params.Encode()
+	}
 
 	tflog.Debug(ctx, "Reading Firestore document by ID", map[string]interface{}{
 		"url": reqURL,
