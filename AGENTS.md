@@ -17,14 +17,20 @@ Every change to this provider must be checked against the following failure mode
 11. **Silent partial configuration** — If `impersonate_service_account` is set without explicit credentials, `Configure()` emits a warning. If `project` cannot be resolved, `Configure()` emits an error and stops.
 12. **Accidental schema modifier removal** — `RequiresReplace` on `collection`, `document_id`, `project`, and `database` must not be removed. `UseStateForUnknown` on `name`, `create_time`, `update_time`, `document_id`, `project`, and `database` must not be removed. `fields` must not gain `RequiresReplace`. Schema-level unit tests enforce these constraints.
 13. **Unverified resource destruction** — Acceptance tests must verify that resources are removed from Firestore after Terraform destroys them. All resource `TestCase` structs must include `CheckDestroy`.
-14. **Empty select list** — An empty `select` list would produce a request with no `mask.fieldPaths`, equivalent to omitting it, but signals user intent to project. Use `listvalidator.SizeAtLeast(1)` to reject empty lists at plan time.
-15. **Missing map_key field** — If `map_key` is set but a returned document does not contain that field in `fields_map`, `Read()` must emit an error diagnostic and stop.
-16. **Empty map_key value** — If `map_key` is set and a document's field value is empty, `Read()` must emit an error diagnostic and stop.
-17. **Duplicate map_key value** — If `map_key` is set and two documents share the same field value, `Read()` must emit an error diagnostic identifying both document IDs.
+14. **Inconsistent map serialization** — `firestoreFieldsToStringMap()` must produce deterministic output. `json.Marshal` on `map[string]interface{}` sorts keys alphabetically, so nested object serialization is stable across plans.
+15. **Integer misparse in fields_map** — Firestore returns `integerValue` as a JSON string (`"42"`), but after `json.Unmarshal` without `UseNumber()` it may arrive as `float64`. `firestoreFieldsToStringMap` handles both representations.
+16. **Null representation ambiguity** — Null fields and empty-string fields both map to `""` in `fields_map`. Users needing to distinguish null from empty string must use the `fields` JSON attribute with `jsondecode()`.
+17. **Infinite pagination loop** — `listDocuments` caps pagination at 100 pages (30,000 documents). If the cap is reached, a warning diagnostic is emitted instead of looping indefinitely.
+18. **Silent truncation** — Without pagination, `listDocuments` silently truncates at ~300 documents. With pagination, the warning diagnostic at the 100-page cap replaces silent truncation.
+19. **Empty select list** — An empty `select` list would produce a request with no `mask.fieldPaths`, equivalent to omitting it. Use `listvalidator.SizeAtLeast(1)` to reject empty lists at plan time.
+20. **Select with non-existent field** — Firestore returns the document with the field absent (no error). This is expected API behavior. Users should check `fields_map` for the presence of expected fields.
+21. **Missing map_key field** — If `map_key` is set but a returned document does not contain that field in `fields_map`, `Read()` must emit an error diagnostic and stop.
+22. **Empty map_key value** — If `map_key` is set and a document's field value is empty, `Read()` must emit an error diagnostic and stop.
+23. **Duplicate map_key value** — If `map_key` is set and two documents share the same field value, `Read()` must emit an error diagnostic identifying both document IDs.
 
 ## Consistency Requirements
 
-- Every code change must be checked against all seventeen failure modes before it is committed.
+- Every code change must be checked against all twenty-three failure modes before it is committed.
 - Every test must be traceable to at least one failure mode. The test name or comment must identify which failure mode it covers.
 - Unit tests use `go test ./internal/provider/... -run "^Test[^A]"` (no `TF_ACC`).
 - Acceptance tests require `TF_ACC=1`, `GOOGLE_PROJECT`, and `GOOGLE_CREDENTIALS` or `GOOGLE_APPLICATION_CREDENTIALS`.
@@ -44,9 +50,9 @@ When adding a feature:
 | File | Role |
 |------|------|
 | `internal/provider/document_resource.go` | Document CRUD, field type conversion, schema version |
-| `internal/provider/document_data_source.go` | Single-document data source, direct ID lookup |
-| `internal/provider/documents_data_source.go` | Collection data source, order_by, limit |
-| `internal/provider/helpers.go` | `doHTTPRequest` (retry, Content-Type check), `jsonStringValidator`, `buildFirestoreWhereClause` |
+| `internal/provider/document_data_source.go` | Single-document data source, direct ID lookup, field projection |
+| `internal/provider/documents_data_source.go` | Collection data source, where, order_by, limit, pagination, field projection, map_key |
+| `internal/provider/helpers.go` | `doHTTPRequest` (retry, Content-Type check), `firestoreFieldsToStringMap` (all types), `jsonStringValidator`, `buildFirestoreWhereClause` |
 | `internal/provider/provider.go` | Auth, credential resolution, Configure() |
 | `internal/provider/document_resource_test.go` | Resource acceptance tests |
 | `internal/provider/document_data_source_test.go` | Single-document data source acceptance tests |
