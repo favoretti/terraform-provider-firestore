@@ -330,9 +330,9 @@ func TestUnitListDocuments_pagination(t *testing.T) {
 		callCount++
 		w.Header().Set("Content-Type", "application/json")
 
-		var resp map[string]interface{}
 		token := r.URL.Query().Get("pageToken")
 
+		var resp map[string]interface{}
 		switch token {
 		case "":
 			resp = map[string]interface{}{
@@ -356,33 +356,30 @@ func TestUnitListDocuments_pagination(t *testing.T) {
 				},
 			}
 		default:
-			t.Fatalf("unexpected pageToken: %s", token)
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprintf(w, `{"error":{"message":"unexpected pageToken: %s"}}`, token)
+			return
 		}
 
 		json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 
+	httpClient := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			req.URL.Scheme = "http"
+			req.URL.Host = srv.Listener.Addr().String()
+			return http.DefaultTransport.RoundTrip(req)
+		}),
+	}
+
 	ds := &DocumentsDataSource{
 		client: &FirestoreClient{
-			HTTPClient: srv.Client(),
+			HTTPClient: httpClient,
 			Project:    "test-project",
 			Database:   "(default)",
 		},
 	}
-
-	// Override the base URL by pointing the HTTP client at the test server.
-	// listDocuments builds URLs from project/database/collection, so we
-	// intercept via a custom transport that rewrites the host.
-	origTransport := srv.Client().Transport
-	srv.Client().Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		req.URL.Scheme = "http"
-		req.URL.Host = srv.Listener.Addr().String()
-		if origTransport != nil {
-			return origTransport.RoundTrip(req)
-		}
-		return http.DefaultTransport.RoundTrip(req)
-	})
 
 	ctx := context.Background()
 	docs, diags := ds.listDocuments(ctx, "test-project", "(default)", "col", nil)
@@ -391,7 +388,7 @@ func TestUnitListDocuments_pagination(t *testing.T) {
 		t.Fatalf("unexpected errors: %s", diags.Errors())
 	}
 	if len(diags.Warnings()) != 0 {
-		t.Fatalf("unexpected warnings: %s", diags.Warnings())
+		t.Fatalf("unexpected warnings: %v", diags.Warnings())
 	}
 	if len(docs) != 4 {
 		t.Fatalf("expected 4 documents, got %d", len(docs))
@@ -413,7 +410,9 @@ func TestUnitListDocuments_pagination(t *testing.T) {
 func TestUnitListDocuments_singlePage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Query().Get("pageToken") != "" {
-			t.Fatal("unexpected second page request")
+			t.Error("unexpected second page request")
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
 		w.Header().Set("Content-Type", "application/json")
 		resp := map[string]interface{}{
@@ -426,19 +425,21 @@ func TestUnitListDocuments_singlePage(t *testing.T) {
 	}))
 	defer srv.Close()
 
+	httpClient := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			req.URL.Scheme = "http"
+			req.URL.Host = srv.Listener.Addr().String()
+			return http.DefaultTransport.RoundTrip(req)
+		}),
+	}
+
 	ds := &DocumentsDataSource{
 		client: &FirestoreClient{
-			HTTPClient: srv.Client(),
+			HTTPClient: httpClient,
 			Project:    "test-project",
 			Database:   "(default)",
 		},
 	}
-
-	srv.Client().Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		req.URL.Scheme = "http"
-		req.URL.Host = srv.Listener.Addr().String()
-		return http.DefaultTransport.RoundTrip(req)
-	})
 
 	ctx := context.Background()
 	docs, diags := ds.listDocuments(ctx, "test-project", "(default)", "col", nil)

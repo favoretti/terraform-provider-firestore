@@ -17,10 +17,11 @@ Every change to this provider must be checked against the following failure mode
 11. **Silent partial configuration** — If `impersonate_service_account` is set without explicit credentials, `Configure()` emits a warning. If `project` cannot be resolved, `Configure()` emits an error and stops.
 12. **Accidental schema modifier removal** — `RequiresReplace` on `collection`, `document_id`, `project`, and `database` must not be removed. `UseStateForUnknown` on `name`, `create_time`, `update_time`, `document_id`, `project`, and `database` must not be removed. `fields` must not gain `RequiresReplace`. Schema-level unit tests enforce these constraints.
 13. **Unverified resource destruction** — Acceptance tests must verify that resources are removed from Firestore after Terraform destroys them. All resource `TestCase` structs must include `CheckDestroy`.
+14. **Empty select list** — An empty `select` list would produce a request with no `mask.fieldPaths`, equivalent to omitting it, but signals user intent to project. Use `listvalidator.SizeAtLeast(1)` to reject empty lists at plan time.
 
 ## Consistency Requirements
 
-- Every code change must be checked against all thirteen failure modes before it is committed.
+- Every code change must be checked against all fourteen failure modes before it is committed.
 - Every test must be traceable to at least one failure mode. The test name or comment must identify which failure mode it covers.
 - Unit tests use `go test ./internal/provider/... -run "^Test[^A]"` (no `TF_ACC`).
 - Acceptance tests require `TF_ACC=1`, `GOOGLE_PROJECT`, and `GOOGLE_CREDENTIALS` or `GOOGLE_APPLICATION_CREDENTIALS`.
