@@ -308,6 +308,29 @@ data "firestore_documents" "test" {
 	})
 }
 
+// TestDocumentsDataSourceSchema_mapKeyAttribute verifies the map_key attribute exists
+// and is Optional (failure modes 21-23: map_key validation).
+func TestDocumentsDataSourceSchema_mapKeyAttribute(t *testing.T) {
+	ctx := context.Background()
+	ds := NewDocumentsDataSource()
+	schemaResp := datasource.SchemaResponse{}
+	ds.Schema(ctx, datasource.SchemaRequest{}, &schemaResp)
+
+	attr, ok := schemaResp.Schema.Attributes["map_key"]
+	if !ok {
+		t.Fatal("map_key attribute missing from schema")
+	}
+
+	strAttr, ok := attr.(schema.StringAttribute)
+	if !ok {
+		t.Fatalf("map_key should be StringAttribute, got %T", attr)
+	}
+
+	if !strAttr.Optional {
+		t.Error("map_key should be Optional")
+	}
+}
+
 func firestoreDoc(project, collection, docID, fieldName, fieldValue string) map[string]interface{} {
 	return map[string]interface{}{
 		"name": fmt.Sprintf("projects/%s/databases/(default)/documents/%s/%s", project, collection, docID),

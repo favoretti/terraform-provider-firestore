@@ -33,6 +33,7 @@ type DocumentsDataSourceModel struct {
 	OrderBy      types.List   `tfsdk:"order_by"`
 	Limit        types.Int64  `tfsdk:"limit"`
 	Select       types.List   `tfsdk:"select"`
+	MapKey       types.String `tfsdk:"map_key"`
 	Documents    types.List   `tfsdk:"documents"`
 	DocumentsMap types.Map    `tfsdk:"documents_map"`
 }
@@ -97,6 +98,10 @@ func (d *DocumentsDataSource) Schema(ctx context.Context, req datasource.SchemaR
 				Validators: []validator.List{
 					listvalidator.SizeAtLeast(1),
 				},
+			},
+			"map_key": schema.StringAttribute{
+				Optional:    true,
+				Description: "Field name to use as the key for documents_map. Defaults to document_id. The field must exist and have a unique, non-empty value in every returned document.",
 			},
 			"documents": schema.ListNestedAttribute{
 				Description: "List of documents in the collection.",
@@ -322,8 +327,49 @@ func (d *DocumentsDataSource) Read(ctx context.Context, req datasource.ReadReque
 	)
 
 	mapElems := make(map[string]attr.Value, len(documents))
+
+	useMapKey := !data.MapKey.IsNull() && data.MapKey.ValueString() != ""
+	var mapKeyField string
+	if useMapKey {
+		mapKeyField = data.MapKey.ValueString()
+	}
+	seenKeys := make(map[string]string, len(documents))
+
 	for _, doc := range documents {
-		mapElems[doc.DocumentID.ValueString()] = types.ObjectValueMust(
+		var mapKey string
+		if useMapKey {
+			fieldsMapElems := doc.FieldsMap.Elements()
+			keyAttr, exists := fieldsMapElems[mapKeyField]
+			if !exists {
+				resp.Diagnostics.AddError(
+					"Missing map_key field",
+					fmt.Sprintf("Document %s has no value for map_key field %q", doc.DocumentID.ValueString(), mapKeyField),
+				)
+				return
+			}
+			keyVal, ok := keyAttr.(types.String)
+			if !ok || keyVal.ValueString() == "" {
+				resp.Diagnostics.AddError(
+					"Empty map_key value",
+					fmt.Sprintf("Document %s has an empty value for map_key field %q", doc.DocumentID.ValueString(), mapKeyField),
+				)
+				return
+			}
+			mapKey = keyVal.ValueString()
+		} else {
+			mapKey = doc.DocumentID.ValueString()
+		}
+
+		if firstDoc, duplicate := seenKeys[mapKey]; duplicate {
+			resp.Diagnostics.AddError(
+				"Duplicate map_key value",
+				fmt.Sprintf("Duplicate map_key value %q found in documents %s and %s", mapKey, firstDoc, doc.DocumentID.ValueString()),
+			)
+			return
+		}
+		seenKeys[mapKey] = doc.DocumentID.ValueString()
+
+		mapElems[mapKey] = types.ObjectValueMust(
 			docObjAttrTypes,
 			map[string]attr.Value{
 				"document_id": doc.DocumentID,
@@ -409,10 +455,10 @@ func (d *DocumentsDataSource) listDocuments(ctx context.Context, project, databa
 			})
 		}
 
-		if listResp.NextPageToken == "" {
+		pageToken = listResp.NextPageToken
+		if pageToken == "" {
 			break
 		}
-		pageToken = listResp.NextPageToken
 	}
 
 	if pageToken != "" {
