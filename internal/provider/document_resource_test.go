@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 	"golang.org/x/oauth2/google"
 )
@@ -22,6 +23,7 @@ func TestAccDocumentResource_autoID(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig() + `
@@ -44,6 +46,7 @@ func TestAccDocumentResource_explicitID(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig() + `
@@ -79,11 +82,15 @@ resource "firestore_document" "test" {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{Config: configV1},
 			{
 				Config: configV2,
 				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction("firestore_document.test", plancheck.ResourceActionUpdate),
+					},
 					PostApplyPostRefresh: []plancheck.PlanCheck{
 						plancheck.ExpectEmptyPlan(),
 					},
@@ -97,6 +104,7 @@ func TestAccDocumentResource_import_short(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig() + `
@@ -121,6 +129,7 @@ func TestAccDocumentResource_import_full(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig() + `
@@ -144,6 +153,7 @@ func TestAccDocumentResource_forceNew_collection(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig() + `
@@ -178,6 +188,7 @@ func TestAccDocumentResource_disappears(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig() + `
@@ -213,6 +224,7 @@ func TestAccDocumentResource_complexFields(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig() + `
@@ -289,6 +301,7 @@ func TestAccDocumentResource_forceNew_documentID(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig() + `
@@ -319,6 +332,7 @@ func TestAccDocumentResource_forceNew_database(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: `
@@ -352,6 +366,7 @@ func TestAccDocumentResource_databaseDefault(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig() + `
@@ -405,6 +420,7 @@ func TestAccDocumentResource_invalidFieldsJSON(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig() + `
@@ -431,6 +447,7 @@ func TestAccDocumentResource_updateMaskPreservesUnmanagedField(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig() + `
@@ -465,6 +482,65 @@ data "firestore_document" "verify" {
 			},
 		},
 	})
+}
+
+// testAccCheckFirestoreDocumentDestroy verifies that all firestore_document resources
+// in the Terraform state have been deleted from Firestore after destroy
+// (failure mode 8: state removal on transient errors).
+func testAccCheckFirestoreDocumentDestroy(s *terraform.State) error {
+	ctx := context.Background()
+
+	creds, err := google.FindDefaultCredentials(ctx,
+		"https://www.googleapis.com/auth/datastore",
+		"https://www.googleapis.com/auth/cloud-platform",
+	)
+	if err != nil {
+		return fmt.Errorf("finding credentials for destroy check: %w", err)
+	}
+
+	token, err := creds.TokenSource.Token()
+	if err != nil {
+		return fmt.Errorf("getting token for destroy check: %w", err)
+	}
+
+	for _, rs := range s.RootModule().Resources {
+		if rs.Type != "firestore_document" {
+			continue
+		}
+
+		project := rs.Primary.Attributes["project"]
+		database := rs.Primary.Attributes["database"]
+		collection := rs.Primary.Attributes["collection"]
+		documentID := rs.Primary.Attributes["document_id"]
+
+		reqURL := fmt.Sprintf(
+			"https://firestore.googleapis.com/v1/projects/%s/databases/%s/documents/%s/%s",
+			project, database, collection, documentID,
+		)
+
+		req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
+		if err != nil {
+			return fmt.Errorf("building destroy-check request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return fmt.Errorf("executing destroy-check request for %s/%s: %w", collection, documentID, err)
+		}
+		resp.Body.Close()
+
+		switch resp.StatusCode {
+		case http.StatusNotFound:
+			continue
+		case http.StatusOK:
+			return fmt.Errorf("firestore document %s/%s still exists after destroy", collection, documentID)
+		default:
+			return fmt.Errorf("unexpected status %d checking destruction of %s/%s", resp.StatusCode, collection, documentID)
+		}
+	}
+
+	return nil
 }
 
 // testAccPatchFirestoreField adds a single string field to an existing Firestore
@@ -508,4 +584,165 @@ func testAccPatchFirestoreField(t *testing.T, project, database, collection, doc
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("unexpected status %d patching field %s/%s.%s", resp.StatusCode, collection, docID, field)
 	}
+}
+
+// TestDocumentResourceSchema_collectionRequiresReplace verifies the collection attribute
+// carries RequiresReplace (failure mode 1: schema stability).
+func TestDocumentResourceSchema_collectionRequiresReplace(t *testing.T) {
+	ctx := context.Background()
+	r := &DocumentResource{}
+
+	var schemaResp fwresource.SchemaResponse
+	r.Schema(ctx, fwresource.SchemaRequest{}, &schemaResp)
+
+	attr, ok := schemaResp.Schema.Attributes["collection"]
+	if !ok {
+		t.Fatal("collection attribute not found in document resource schema")
+	}
+	sa, ok := attr.(fwschema.StringAttribute)
+	if !ok {
+		t.Fatalf("collection is not a StringAttribute, got %T", attr)
+	}
+	hasRequiresReplace := false
+	for _, pm := range sa.PlanModifiers {
+		if strings.Contains(strings.ToLower(fmt.Sprintf("%T", pm)), "requiresreplace") {
+			hasRequiresReplace = true
+		}
+	}
+	if !hasRequiresReplace {
+		t.Error("collection attribute must have RequiresReplace plan modifier")
+	}
+}
+
+// TestDocumentResourceSchema_documentIDRequiresReplace verifies the document_id attribute
+// carries RequiresReplace (failure mode 1: schema stability).
+func TestDocumentResourceSchema_documentIDRequiresReplace(t *testing.T) {
+	ctx := context.Background()
+	r := &DocumentResource{}
+
+	var schemaResp fwresource.SchemaResponse
+	r.Schema(ctx, fwresource.SchemaRequest{}, &schemaResp)
+
+	attr, ok := schemaResp.Schema.Attributes["document_id"]
+	if !ok {
+		t.Fatal("document_id attribute not found in document resource schema")
+	}
+	sa, ok := attr.(fwschema.StringAttribute)
+	if !ok {
+		t.Fatalf("document_id is not a StringAttribute, got %T", attr)
+	}
+	hasRequiresReplace := false
+	for _, pm := range sa.PlanModifiers {
+		if strings.Contains(strings.ToLower(fmt.Sprintf("%T", pm)), "requiresreplace") {
+			hasRequiresReplace = true
+		}
+	}
+	if !hasRequiresReplace {
+		t.Error("document_id attribute must have RequiresReplace plan modifier")
+	}
+}
+
+// TestDocumentResourceSchema_databaseRequiresReplace verifies the database attribute
+// carries RequiresReplace (failure mode 1: schema stability).
+func TestDocumentResourceSchema_databaseRequiresReplace(t *testing.T) {
+	ctx := context.Background()
+	r := &DocumentResource{}
+
+	var schemaResp fwresource.SchemaResponse
+	r.Schema(ctx, fwresource.SchemaRequest{}, &schemaResp)
+
+	attr, ok := schemaResp.Schema.Attributes["database"]
+	if !ok {
+		t.Fatal("database attribute not found in document resource schema")
+	}
+	sa, ok := attr.(fwschema.StringAttribute)
+	if !ok {
+		t.Fatalf("database is not a StringAttribute, got %T", attr)
+	}
+	hasRequiresReplace := false
+	for _, pm := range sa.PlanModifiers {
+		if strings.Contains(strings.ToLower(fmt.Sprintf("%T", pm)), "requiresreplace") {
+			hasRequiresReplace = true
+		}
+	}
+	if !hasRequiresReplace {
+		t.Error("database attribute must have RequiresReplace plan modifier")
+	}
+}
+
+// TestDocumentResourceSchema_fieldsNoRequiresReplace verifies that the fields attribute
+// does NOT carry RequiresReplace, confirming in-place updates (failure mode 5: outage patterns).
+func TestDocumentResourceSchema_fieldsNoRequiresReplace(t *testing.T) {
+	ctx := context.Background()
+	r := &DocumentResource{}
+
+	var schemaResp fwresource.SchemaResponse
+	r.Schema(ctx, fwresource.SchemaRequest{}, &schemaResp)
+
+	attr, ok := schemaResp.Schema.Attributes["fields"]
+	if !ok {
+		t.Fatal("fields attribute not found in document resource schema")
+	}
+	sa, ok := attr.(fwschema.StringAttribute)
+	if !ok {
+		t.Fatalf("fields is not a StringAttribute, got %T", attr)
+	}
+	for _, pm := range sa.PlanModifiers {
+		if strings.Contains(strings.ToLower(fmt.Sprintf("%T", pm)), "requiresreplace") {
+			t.Error("fields attribute must NOT have RequiresReplace plan modifier")
+		}
+	}
+}
+
+// TestDocumentResourceSchema_computedAttributesUseStateForUnknown verifies all computed
+// attributes use UseStateForUnknown to prevent plan drift (failure mode 1, 7).
+func TestDocumentResourceSchema_computedAttributesUseStateForUnknown(t *testing.T) {
+	ctx := context.Background()
+	r := &DocumentResource{}
+
+	var schemaResp fwresource.SchemaResponse
+	r.Schema(ctx, fwresource.SchemaRequest{}, &schemaResp)
+
+	computedAttrs := []string{"name", "create_time", "update_time", "document_id", "project", "database"}
+
+	for _, attrName := range computedAttrs {
+		t.Run(attrName, func(t *testing.T) {
+			attr, ok := schemaResp.Schema.Attributes[attrName]
+			if !ok {
+				t.Fatalf("%s attribute not found in document resource schema", attrName)
+			}
+			sa, ok := attr.(fwschema.StringAttribute)
+			if !ok {
+				t.Fatalf("%s is not a StringAttribute, got %T", attrName, attr)
+			}
+			hasUseStateForUnknown := false
+			for _, pm := range sa.PlanModifiers {
+				if strings.Contains(strings.ToLower(fmt.Sprintf("%T", pm)), "usestateforunknown") {
+					hasUseStateForUnknown = true
+				}
+			}
+			if !hasUseStateForUnknown {
+				t.Errorf("%s attribute must have UseStateForUnknown plan modifier", attrName)
+			}
+		})
+	}
+}
+
+// TestAccDocumentResource_emptyCollection verifies that an empty collection
+// produces a plan-time error (failure mode 9: input validation gaps).
+func TestAccDocumentResource_emptyCollection(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: providerConfig() + `
+resource "firestore_document" "test" {
+  collection = ""
+  fields     = jsonencode({ name = "test" })
+}`,
+				ExpectError: regexp.MustCompile(`(?i)length must be at least 1`),
+			},
+		},
+	})
 }

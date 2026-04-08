@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
@@ -75,10 +76,16 @@ func (d *DocumentsDataSource) Schema(ctx context.Context, req datasource.SchemaR
 			"collection": schema.StringAttribute{
 				Description: "The collection path (e.g., 'users' or 'users/123/orders').",
 				Required:    true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtLeast(1),
+				},
 			},
 			"limit": schema.Int64Attribute{
 				Description: "Maximum number of documents to return.",
 				Optional:    true,
+				Validators: []validator.Int64{
+					int64validator.AtLeast(1),
+				},
 			},
 			"documents": schema.ListNestedAttribute{
 				Description: "List of documents in the collection.",

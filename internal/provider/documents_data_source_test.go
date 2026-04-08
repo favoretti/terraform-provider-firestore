@@ -196,6 +196,43 @@ data "firestore_documents" "test" {
 	})
 }
 
+// TestAccDocumentsDataSource_emptyCollection verifies that an empty collection
+// produces a plan-time error (failure mode 9: input validation gaps).
+func TestAccDocumentsDataSource_emptyCollection(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: providerConfig() + `
+data "firestore_documents" "test" {
+  collection = ""
+}`,
+				ExpectError: regexp.MustCompile(`(?i)length must be at least 1`),
+			},
+		},
+	})
+}
+
+// TestAccDocumentsDataSource_limitZero verifies that limit=0 produces a
+// plan-time error (failure mode 9: input validation gaps).
+func TestAccDocumentsDataSource_limitZero(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: providerConfig() + `
+data "firestore_documents" "test" {
+  collection = "tf-acc-test"
+  limit      = 0
+}`,
+				ExpectError: regexp.MustCompile(`(?i)must be at least 1`),
+			},
+		},
+	})
+}
+
 // TestAccDocumentsDataSource_invalidOperator verifies that an invalid operator
 // produces a plan-time error (failure mode 4: missing input validation).
 func TestAccDocumentsDataSource_invalidOperator(t *testing.T) {

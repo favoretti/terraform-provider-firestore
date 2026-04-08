@@ -3,10 +3,13 @@ package provider
 import (
 	"context"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
@@ -179,6 +182,52 @@ func TestDoHTTPRequest_exhaustedRetry(t *testing.T) {
 	}
 	if calls.Load() != 4 {
 		t.Errorf("expected 4 attempts, got %d", calls.Load())
+	}
+}
+
+// TestDoHTTPRequest_rejectsHTMLContentType verifies that doHTTPRequest returns an error
+// when the server responds with Content-Type: text/html on a 200 status, preventing
+// HTML error pages from being stored as field data (failure mode 10: unvalidated API response format).
+func TestDoHTTPRequest_rejectsHTMLContentType(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "<html><body>Login required</body></html>")
+	}))
+	defer srv.Close()
+
+	status, _, err := doHTTPRequest(context.Background(), srv.Client(), "GET", srv.URL, nil, nil)
+	if err == nil {
+		t.Fatal("expected error for text/html Content-Type, got nil")
+	}
+	if status != http.StatusOK {
+		t.Errorf("expected status 200 (the raw status), got %d", status)
+	}
+	if !strings.Contains(err.Error(), "expected application/json") {
+		t.Errorf("error should mention expected content type, got: %v", err)
+	}
+}
+
+// TestDoHTTPRequest_retriesNetworkError verifies that doHTTPRequest retries when the
+// server is unreachable, exhausting all 4 attempts before returning an error
+// (failure mode 5: no retry on transient failure).
+func TestDoHTTPRequest_retriesNetworkError(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to create listener: %v", err)
+	}
+	unreachableURL := "http://" + listener.Addr().String()
+	listener.Close()
+
+	start := time.Now()
+	_, _, err = doHTTPRequest(context.Background(), http.DefaultClient, "GET", unreachableURL, nil, nil)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected error for unreachable server, got nil")
+	}
+	if elapsed < 3*time.Second {
+		t.Errorf("expected retries to take at least 3s (backoff), elapsed: %v", elapsed)
 	}
 }
 

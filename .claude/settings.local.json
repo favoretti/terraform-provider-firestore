@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh pr:*)",
+      "Bash(gh api:*)",
+      "Bash(grep -v \"^.*\\\\.exe$\")",
+      "Bash(gh auth:*)",
+      "Bash(gh repo:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(go get:*)",
+      "Bash(go mod:*)",
+      "Bash(git commit:*)",
+      "Bash(ssh:*)"
+    ]
+  }
+}
