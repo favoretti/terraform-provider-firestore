@@ -100,6 +100,58 @@ func TestResolveProviderConfig_HCLCredentialsOverridesEnv(t *testing.T) {
 	}
 }
 
+// TestResolveProviderConfig_credentialsFromGOOGLE_APPLICATION_CREDENTIALS verifies fallback
+// to GOOGLE_APPLICATION_CREDENTIALS when GOOGLE_CREDENTIALS is empty (failure mode 6).
+func TestResolveProviderConfig_credentialsFromGOOGLE_APPLICATION_CREDENTIALS(t *testing.T) {
+	t.Setenv("GOOGLE_CREDENTIALS", "")
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "/path/to/creds.json")
+	got := resolveProviderConfig(nullModel())
+	if got.credentials != "/path/to/creds.json" {
+		t.Errorf("expected /path/to/creds.json, got %q", got.credentials)
+	}
+}
+
+// TestResolveProviderConfig_impersonateFromEnv verifies resolution of
+// GOOGLE_IMPERSONATE_SERVICE_ACCOUNT environment variable (failure mode 6).
+func TestResolveProviderConfig_impersonateFromEnv(t *testing.T) {
+	t.Setenv("GOOGLE_IMPERSONATE_SERVICE_ACCOUNT", "sa@project.iam.gserviceaccount.com")
+	got := resolveProviderConfig(nullModel())
+	if got.impersonateServiceAccount != "sa@project.iam.gserviceaccount.com" {
+		t.Errorf("expected sa@project.iam.gserviceaccount.com, got %q", got.impersonateServiceAccount)
+	}
+}
+
+// TestResolveProviderConfig_HCLImpersonateOverridesEnv verifies that the HCL
+// impersonate_service_account attribute takes precedence over the environment
+// variable (failure mode 6).
+func TestResolveProviderConfig_HCLImpersonateOverridesEnv(t *testing.T) {
+	t.Setenv("GOOGLE_IMPERSONATE_SERVICE_ACCOUNT", "env-sa@project.iam.gserviceaccount.com")
+	m := nullModel()
+	m.ImpersonateServiceAccount = types.StringValue("hcl-sa@project.iam.gserviceaccount.com")
+	got := resolveProviderConfig(m)
+	if got.impersonateServiceAccount != "hcl-sa@project.iam.gserviceaccount.com" {
+		t.Errorf("expected hcl-sa@project.iam.gserviceaccount.com, got %q", got.impersonateServiceAccount)
+	}
+}
+
+// TestResolveProviderConfig_impersonateWithoutCredentials verifies that setting
+// impersonate_service_account without credentials resolves both values correctly,
+// enabling the warning diagnostic in Configure() (failure mode 11).
+func TestResolveProviderConfig_impersonateWithoutCredentials(t *testing.T) {
+	t.Setenv("GOOGLE_CREDENTIALS", "")
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", "")
+	t.Setenv("GOOGLE_IMPERSONATE_SERVICE_ACCOUNT", "")
+	m := nullModel()
+	m.ImpersonateServiceAccount = types.StringValue("sa@project.iam.gserviceaccount.com")
+	got := resolveProviderConfig(m)
+	if got.impersonateServiceAccount != "sa@project.iam.gserviceaccount.com" {
+		t.Errorf("expected sa@project.iam.gserviceaccount.com, got %q", got.impersonateServiceAccount)
+	}
+	if got.credentials != "" {
+		t.Errorf("expected empty credentials, got %q", got.credentials)
+	}
+}
+
 func TestProviderSchema_credentialsSensitive(t *testing.T) {
 	ctx := context.Background()
 	p := &FirestoreProvider{version: "test"}
