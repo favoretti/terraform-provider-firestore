@@ -39,3 +39,5 @@ dist/
 # Local development
 .envrc
 .env
+.claude/
+.playwright-mcp/
