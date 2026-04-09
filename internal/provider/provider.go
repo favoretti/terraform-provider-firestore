@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/function"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
 	"github.com/hashicorp/terraform-plugin-framework/provider/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -21,6 +22,7 @@ import (
 )
 
 var _ provider.Provider = &FirestoreProvider{}
+var _ provider.ProviderWithFunctions = &FirestoreProvider{}
 
 type FirestoreProvider struct {
 	version string
@@ -282,5 +284,14 @@ func (p *FirestoreProvider) DataSources(ctx context.Context) []func() datasource
 	return []func() datasource.DataSource{
 		NewDocumentDataSource,
 		NewDocumentsDataSource,
+	}
+}
+
+func (p *FirestoreProvider) Functions(ctx context.Context) []func() function.Function {
+	return []func() function.Function{
+		NewDecodeFunction,
+		NewDocumentsMapFunction,
+		NewOneDocumentFunction,
+		NewEncodeDocumentFunction,
 	}
 }

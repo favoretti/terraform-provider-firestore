@@ -30,10 +30,14 @@ Every change to this provider must be checked against the following failure mode
 24. **Composite map_key with missing field** — If any field in the `map_key` list is absent from a document's `fields_map`, `Read()` must emit an error diagnostic identifying the document and the missing field. Covered by `resolveDocumentMapKey`.
 25. **Composite map_key with empty segment** — If any field value in the composite key is empty, `Read()` must emit an error diagnostic. An empty segment produces ambiguous keys (e.g., `"_prod"` vs `"prod"`). Covered by `resolveDocumentMapKey`.
 26. **Composite key collision from separator in values** — If field values contain the separator character, composite keys can collide (e.g., `"a_b" + "c"` vs `"a" + "b_c"` both produce `"a_b_c"`). This is documented behavior, not a runtime error. Users must choose a separator that does not appear in their field values.
+27. **Function type mismatch** — `documents_map` and `one_document` receive a list whose elements lack `document_id` or `fields` attributes. Must return a `FuncError` identifying the missing attribute.
+28. **Encode omits required metadata** — `encode_document` must reject empty `document_type` or `schema_version` strings with a `FuncError`.
+29. **One document with multiple results** — `one_document` receives more than one element. Must return a `FuncError` naming the count.
+30. **Decode invalid JSON** — `decode` receives a non-JSON string. Must return a `FuncError` with the parse error.
 
 ## Consistency Requirements
 
-- Every code change must be checked against all twenty-six failure modes before it is committed.
+- Every code change must be checked against all thirty failure modes before it is committed.
 - Every test must be traceable to at least one failure mode. The test name or comment must identify which failure mode it covers.
 - Unit tests use `go test ./internal/provider/... -run "^Test[^A]"` (no `TF_ACC`).
 - Acceptance tests require `TF_ACC=1`, `GOOGLE_PROJECT`, and `GOOGLE_CREDENTIALS` or `GOOGLE_APPLICATION_CREDENTIALS`.
@@ -62,3 +66,12 @@ When adding a feature:
 | `internal/provider/documents_data_source_test.go` | Collection data source acceptance tests |
 | `internal/provider/helpers_test.go` | Unit tests for helpers and HTTP retry logic |
 | `internal/provider/provider_test.go` | Provider schema unit tests and test setup |
+| `internal/provider/function_decode.go` | `decode(string) -> dynamic` provider function |
+| `internal/provider/function_documents_map.go` | `documents_map(list) -> map(string, dynamic)` provider function |
+| `internal/provider/function_one_document.go` | `one_document(list) -> dynamic` provider function |
+| `internal/provider/function_encode_document.go` | `encode_document(dynamic, string, string) -> string` provider function, `attrValueToGoValue` converter |
+| `internal/provider/function_helpers.go` | `goValueToTerraformValue`, `goValueToAttrValue` shared converters |
+| `internal/provider/function_decode_test.go` | Unit tests for decode function and value converters |
+| `internal/provider/function_documents_map_test.go` | Unit tests for documents_map function |
+| `internal/provider/function_one_document_test.go` | Unit tests for one_document function |
+| `internal/provider/function_encode_document_test.go` | Unit tests for encode_document function and `attrValueToGoValue` |
