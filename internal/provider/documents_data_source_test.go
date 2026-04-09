@@ -234,6 +234,78 @@ data "firestore_documents" "test" {
 	})
 }
 
+// TestAccDocumentsDataSource_compositeMapKey verifies multi-field map_key with
+// custom separator (failure modes 24-26).
+func TestAccDocumentsDataSource_compositeMapKey(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: providerConfig() + `
+resource "firestore_document" "comp1" {
+  collection  = "tf-acc-test-composite"
+  document_id = "comp-doc-1"
+  fields      = jsonencode({ region = "us-east", env = "prod" })
+}
+resource "firestore_document" "comp2" {
+  collection  = "tf-acc-test-composite"
+  document_id = "comp-doc-2"
+  fields      = jsonencode({ region = "eu-west", env = "staging" })
+}
+data "firestore_documents" "test" {
+  collection        = "tf-acc-test-composite"
+  map_key           = ["region", "env"]
+  map_key_separator = "-"
+  depends_on        = [firestore_document.comp1, firestore_document.comp2]
+}`,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("data.firestore_documents.test",
+						tfjsonpath.New("documents_map").AtMapKey("us-east-prod").AtMapKey("document_id"),
+						knownvalue.StringExact("comp-doc-1"),
+					),
+					statecheck.ExpectKnownValue("data.firestore_documents.test",
+						tfjsonpath.New("documents_map").AtMapKey("eu-west-staging").AtMapKey("document_id"),
+						knownvalue.StringExact("comp-doc-2"),
+					),
+				},
+			},
+		},
+	})
+}
+
+// TestAccDocumentsDataSource_singleMapKeyList verifies single-element map_key list
+// behaves like the old single-string map_key (failure mode 21).
+func TestAccDocumentsDataSource_singleMapKeyList(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: providerConfig() + `
+resource "firestore_document" "single" {
+  collection  = "tf-acc-test-singlekey"
+  document_id = "single-doc-1"
+  fields      = jsonencode({ label = "alpha" })
+}
+data "firestore_documents" "test" {
+  collection = "tf-acc-test-singlekey"
+  map_key    = ["label"]
+  depends_on = [firestore_document.single]
+}`,
+				ConfigStateChecks: []statecheck.StateCheck{
+					statecheck.ExpectKnownValue("data.firestore_documents.test",
+						tfjsonpath.New("documents_map").AtMapKey("alpha").AtMapKey("document_id"),
+						knownvalue.StringExact("single-doc-1"),
+					),
+				},
+			},
+		},
+	})
+}
+
 // TestAccDocumentsDataSource_emptyCollection verifies that an empty collection
 // produces a plan-time error (failure mode 9: input validation gaps).
 func TestAccDocumentsDataSource_emptyCollection(t *testing.T) {
