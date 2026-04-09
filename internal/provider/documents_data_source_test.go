@@ -44,6 +44,7 @@ func TestAccDocumentsDataSource_list(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig() + `
@@ -80,6 +81,7 @@ func TestAccDocumentsDataSource_whereFilter(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig() + `
@@ -121,6 +123,7 @@ func TestAccDocumentsDataSource_whereMultiple(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig() + `
@@ -161,6 +164,7 @@ func TestAccDocumentsDataSource_limit(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig() + `
@@ -199,6 +203,7 @@ func TestAccDocumentsDataSource_documentsMap_keys(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig() + `

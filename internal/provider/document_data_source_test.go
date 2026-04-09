@@ -59,6 +59,7 @@ func TestAccDocumentDataSource_byID(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		CheckDestroy:             testAccCheckFirestoreDocumentDestroy,
 		Steps: []resource.TestStep{
 			{
 				Config: providerConfig() + `
