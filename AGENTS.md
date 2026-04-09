@@ -27,10 +27,13 @@ Every change to this provider must be checked against the following failure mode
 21. **Missing map_key field** — If `map_key` is set but a returned document does not contain that field in `fields_map`, `Read()` must emit an error diagnostic and stop.
 22. **Empty map_key value** — If `map_key` is set and a document's field value is empty, `Read()` must emit an error diagnostic and stop.
 23. **Duplicate map_key value** — If `map_key` is set and two documents share the same field value, `Read()` must emit an error diagnostic identifying both document IDs.
+24. **Composite map_key with missing field** — If any field in the `map_key` list is absent from a document's `fields_map`, `Read()` must emit an error diagnostic identifying the document and the missing field. Covered by `resolveDocumentMapKey`.
+25. **Composite map_key with empty segment** — If any field value in the composite key is empty, `Read()` must emit an error diagnostic. An empty segment produces ambiguous keys (e.g., `"_prod"` vs `"prod"`). Covered by `resolveDocumentMapKey`.
+26. **Composite key collision from separator in values** — If field values contain the separator character, composite keys can collide (e.g., `"a_b" + "c"` vs `"a" + "b_c"` both produce `"a_b_c"`). This is documented behavior, not a runtime error. Users must choose a separator that does not appear in their field values.
 
 ## Consistency Requirements
 
-- Every code change must be checked against all twenty-three failure modes before it is committed.
+- Every code change must be checked against all twenty-six failure modes before it is committed.
 - Every test must be traceable to at least one failure mode. The test name or comment must identify which failure mode it covers.
 - Unit tests use `go test ./internal/provider/... -run "^Test[^A]"` (no `TF_ACC`).
 - Acceptance tests require `TF_ACC=1`, `GOOGLE_PROJECT`, and `GOOGLE_CREDENTIALS` or `GOOGLE_APPLICATION_CREDENTIALS`.

@@ -80,7 +80,7 @@ data "firestore_documents" "network_names" {
 ```hcl
 data "firestore_documents" "apps" {
   collection = "fcp-app-onboarding"
-  map_key    = "name"
+  map_key    = ["name"]
 }
 
 resource "some_resource" "app" {
@@ -88,6 +88,21 @@ resource "some_resource" "app" {
   name     = each.key                            # e.g., "fcp-app-example"
   eai      = each.value.fields_map["eai"]        # e.g., "9998002"
   email    = each.value.fields_map["group_email"]
+}
+```
+
+### Composite Map Key
+
+```hcl
+data "firestore_documents" "envs" {
+  collection        = "environments"
+  map_key           = ["region", "env"]
+  map_key_separator = "-"
+}
+
+resource "some_resource" "env" {
+  for_each = data.firestore_documents.envs.documents_map
+  name     = each.key   # e.g., "us-east-1-prod"
 }
 ```
 
@@ -115,7 +130,8 @@ output "first_location" {
 - `database` (String) - The Firestore database ID. Overrides the provider database.
 - `limit` (Number) - Maximum number of documents to return. Must be at least 1.
 - `select` (List of String) - List of field paths to return. If omitted, all fields are returned. Must contain at least one entry.
-- `map_key` (String) - Field name to use as the key for `documents_map`. Defaults to `document_id`. The specified field must exist and have a unique, non-empty value in every returned document.
+- `map_key` (List of String) - List of field names to use as the key for `documents_map`. Defaults to `document_id`. When multiple fields are provided, their values are concatenated with `map_key_separator`. Each specified field must exist and have a unique, non-empty value in every returned document. Must contain at least one entry.
+- `map_key_separator` (String) - Separator for composite `map_key` values. Defaults to `_`. Choose a separator that does not appear in the field values to avoid key collisions.
 - `where` (Block List) - Filter conditions. Multiple blocks are combined with AND. Each block contains:
   - `field` (String, Required) - The field path to filter on.
   - `operator` (String, Required) - The comparison operator. Valid values: `EQUAL`, `NOT_EQUAL`, `LESS_THAN`, `LESS_THAN_OR_EQUAL`, `GREATER_THAN`, `GREATER_THAN_OR_EQUAL`, `ARRAY_CONTAINS`, `IN`, `ARRAY_CONTAINS_ANY`, `NOT_IN`.
@@ -132,7 +148,7 @@ output "first_location" {
   - `fields_map` (Map of String) - Top-level fields serialized as strings. Complex values (maps, arrays, geopoints) are JSON-encoded.
   - `create_time` (String) - The time the document was created.
   - `update_time` (String) - The time the document was last updated.
-- `documents_map` (Map of Object) - Documents indexed by `document_id` (or by the field specified in `map_key`), for use with `for_each`. Each entry has the same shape as a `documents` list entry.
+- `documents_map` (Map of Object) - Documents indexed by `document_id` (or by the fields specified in `map_key`), for use with `for_each`. Each entry has the same shape as a `documents` list entry.
 
 ## Pagination
 

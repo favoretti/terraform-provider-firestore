@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
@@ -26,16 +27,17 @@ type DocumentsDataSource struct {
 }
 
 type DocumentsDataSourceModel struct {
-	Project      types.String `tfsdk:"project"`
-	Database     types.String `tfsdk:"database"`
-	Collection   types.String `tfsdk:"collection"`
-	Where        types.List   `tfsdk:"where"`
-	OrderBy      types.List   `tfsdk:"order_by"`
-	Limit        types.Int64  `tfsdk:"limit"`
-	Select       types.List   `tfsdk:"select"`
-	MapKey       types.String `tfsdk:"map_key"`
-	Documents    types.List   `tfsdk:"documents"`
-	DocumentsMap types.Map    `tfsdk:"documents_map"`
+	Project         types.String `tfsdk:"project"`
+	Database        types.String `tfsdk:"database"`
+	Collection      types.String `tfsdk:"collection"`
+	Where           types.List   `tfsdk:"where"`
+	OrderBy         types.List   `tfsdk:"order_by"`
+	Limit           types.Int64  `tfsdk:"limit"`
+	Select          types.List   `tfsdk:"select"`
+	MapKey          types.List   `tfsdk:"map_key"`
+	MapKeySeparator types.String `tfsdk:"map_key_separator"`
+	Documents       types.List   `tfsdk:"documents"`
+	DocumentsMap    types.Map    `tfsdk:"documents_map"`
 }
 
 type WhereCondition struct {
@@ -99,9 +101,17 @@ func (d *DocumentsDataSource) Schema(ctx context.Context, req datasource.SchemaR
 					listvalidator.SizeAtLeast(1),
 				},
 			},
-			"map_key": schema.StringAttribute{
+			"map_key": schema.ListAttribute{
+				ElementType: types.StringType,
 				Optional:    true,
-				Description: "Field name to use as the key for documents_map. Defaults to document_id. The field must exist and have a unique, non-empty value in every returned document.",
+				Description: "Field names to use as the key for documents_map. When multiple fields are provided, their values are concatenated with map_key_separator. Defaults to document_id when omitted. Each field must exist and have a non-empty value in every returned document.",
+				Validators: []validator.List{
+					listvalidator.SizeAtLeast(1),
+				},
+			},
+			"map_key_separator": schema.StringAttribute{
+				Optional:    true,
+				Description: "Separator used to join multiple map_key field values into a single key. Defaults to \"_\".",
 			},
 			"documents": schema.ListNestedAttribute{
 				Description: "List of documents in the collection.",
@@ -328,34 +338,31 @@ func (d *DocumentsDataSource) Read(ctx context.Context, req datasource.ReadReque
 
 	mapElems := make(map[string]attr.Value, len(documents))
 
-	useMapKey := !data.MapKey.IsNull() && data.MapKey.ValueString() != ""
-	var mapKeyField string
-	if useMapKey {
-		mapKeyField = data.MapKey.ValueString()
+	var mapKeyFields []string
+	if !data.MapKey.IsNull() && !data.MapKey.IsUnknown() {
+		resp.Diagnostics.Append(data.MapKey.ElementsAs(ctx, &mapKeyFields, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
 	}
+	useMapKey := len(mapKeyFields) > 0
+
+	separator := "_"
+	if !data.MapKeySeparator.IsNull() && data.MapKeySeparator.ValueString() != "" {
+		separator = data.MapKeySeparator.ValueString()
+	}
+
 	seenKeys := make(map[string]string, len(documents))
 
 	for _, doc := range documents {
 		var mapKey string
 		if useMapKey {
-			fieldsMapElems := doc.FieldsMap.Elements()
-			keyAttr, exists := fieldsMapElems[mapKeyField]
-			if !exists {
-				resp.Diagnostics.AddError(
-					"Missing map_key field",
-					fmt.Sprintf("Document %s has no value for map_key field %q", doc.DocumentID.ValueString(), mapKeyField),
-				)
+			var err error
+			mapKey, err = resolveDocumentMapKey(doc, mapKeyFields, separator)
+			if err != nil {
+				resp.Diagnostics.AddError("map_key resolution error", err.Error())
 				return
 			}
-			keyVal, ok := keyAttr.(types.String)
-			if !ok || keyVal.ValueString() == "" {
-				resp.Diagnostics.AddError(
-					"Empty map_key value",
-					fmt.Sprintf("Document %s has an empty value for map_key field %q", doc.DocumentID.ValueString(), mapKeyField),
-				)
-				return
-			}
-			mapKey = keyVal.ValueString()
 		} else {
 			mapKey = doc.DocumentID.ValueString()
 		}
@@ -578,4 +585,25 @@ func (d *DocumentsDataSource) runStructuredQuery(ctx context.Context, project, d
 	}
 
 	return documents, diags
+}
+
+func resolveDocumentMapKey(doc DocumentResult, mapKeyFields []string, separator string) (string, error) {
+	if len(mapKeyFields) == 0 {
+		return doc.DocumentID.ValueString(), nil
+	}
+
+	fieldsMapElems := doc.FieldsMap.Elements()
+	parts := make([]string, len(mapKeyFields))
+	for i, field := range mapKeyFields {
+		keyAttr, exists := fieldsMapElems[field]
+		if !exists {
+			return "", fmt.Errorf("document %s has no value for map_key field %q", doc.DocumentID.ValueString(), field)
+		}
+		keyVal, ok := keyAttr.(types.String)
+		if !ok || keyVal.ValueString() == "" {
+			return "", fmt.Errorf("document %s has an empty value for map_key field %q", doc.DocumentID.ValueString(), field)
+		}
+		parts[i] = keyVal.ValueString()
+	}
+	return strings.Join(parts, separator), nil
 }

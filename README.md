@@ -130,7 +130,14 @@ data "firestore_documents" "active_users" {
 # Use map_key for meaningful for_each keys
 data "firestore_documents" "apps" {
   collection = "fcp-app-onboarding"
-  map_key    = "name"
+  map_key    = ["name"]
+}
+
+# Composite map_key with custom separator
+data "firestore_documents" "envs" {
+  collection        = "environments"
+  map_key           = ["region", "env"]
+  map_key_separator = "-"
 }
 
 resource "some_resource" "app" {
@@ -210,7 +217,8 @@ Lists documents in a collection with optional filtering. Automatically paginates
   - `direction` - ASCENDING or DESCENDING
 - `limit` (Optional) - Maximum documents to return
 - `select` (Optional) - List of field paths to return
-- `map_key` (Optional) - Field name to key documents_map by (defaults to document_id)
+- `map_key` (Optional) - List of field names to key `documents_map` by (defaults to `document_id`). When multiple fields are provided, their values are concatenated with `map_key_separator`.
+- `map_key_separator` (Optional) - Separator for composite `map_key` values. Defaults to `_`.
 - `project` (Optional) - GCP project. Overrides provider setting.
 - `database` (Optional) - Firestore database ID. Overrides provider setting.
 
@@ -222,7 +230,7 @@ Lists documents in a collection with optional filtering. Automatically paginates
   - `fields_map` - Top-level fields serialized as strings. Complex values are JSON-encoded.
   - `create_time` - Creation timestamp
   - `update_time` - Update timestamp
-- `documents_map` - Documents indexed by `document_id` (or `map_key` field), for use with `for_each`
+- `documents_map` - Documents indexed by `document_id` (or by the fields specified in `map_key`), for use with `for_each`
 
 ## Development
 

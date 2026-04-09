@@ -7,10 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
 	"github.com/hashicorp/terraform-plugin-testing/statecheck"
@@ -314,7 +317,7 @@ data "firestore_documents" "test" {
 }
 
 // TestDocumentsDataSourceSchema_mapKeyAttribute verifies the map_key attribute exists
-// and is Optional (failure modes 21-23: map_key validation).
+// and is Optional (failure modes 21-25: map_key validation).
 func TestDocumentsDataSourceSchema_mapKeyAttribute(t *testing.T) {
 	ctx := context.Background()
 	ds := NewDocumentsDataSource()
@@ -326,13 +329,36 @@ func TestDocumentsDataSourceSchema_mapKeyAttribute(t *testing.T) {
 		t.Fatal("map_key attribute missing from schema")
 	}
 
+	listAttr, ok := attr.(schema.ListAttribute)
+	if !ok {
+		t.Fatalf("map_key should be ListAttribute, got %T", attr)
+	}
+
+	if !listAttr.Optional {
+		t.Error("map_key should be Optional")
+	}
+}
+
+// TestDocumentsDataSourceSchema_mapKeySeparatorAttribute verifies the map_key_separator
+// attribute exists and is Optional (failure mode 26: separator collision).
+func TestDocumentsDataSourceSchema_mapKeySeparatorAttribute(t *testing.T) {
+	ctx := context.Background()
+	ds := NewDocumentsDataSource()
+	schemaResp := datasource.SchemaResponse{}
+	ds.Schema(ctx, datasource.SchemaRequest{}, &schemaResp)
+
+	attr, ok := schemaResp.Schema.Attributes["map_key_separator"]
+	if !ok {
+		t.Fatal("map_key_separator attribute missing from schema")
+	}
+
 	strAttr, ok := attr.(schema.StringAttribute)
 	if !ok {
-		t.Fatalf("map_key should be StringAttribute, got %T", attr)
+		t.Fatalf("map_key_separator should be StringAttribute, got %T", attr)
 	}
 
 	if !strAttr.Optional {
-		t.Error("map_key should be Optional")
+		t.Error("map_key_separator should be Optional")
 	}
 }
 
@@ -477,6 +503,108 @@ func TestUnitListDocuments_singlePage(t *testing.T) {
 	}
 	if len(docs) != 2 {
 		t.Fatalf("expected 2 documents, got %d", len(docs))
+	}
+}
+
+func makeDocResult(docID string, fields map[string]string) DocumentResult {
+	mapVals := make(map[string]attr.Value, len(fields))
+	for k, v := range fields {
+		mapVals[k] = types.StringValue(v)
+	}
+	return DocumentResult{
+		DocumentID: types.StringValue(docID),
+		Fields:     types.StringValue("{}"),
+		FieldsMap:  types.MapValueMust(types.StringType, mapVals),
+		CreateTime: types.StringValue("2024-01-01T00:00:00Z"),
+		UpdateTime: types.StringValue("2024-01-01T00:00:00Z"),
+	}
+}
+
+// TestResolveDocumentMapKey_singleField verifies single-field map_key resolution
+// (failure mode 21: missing map_key field).
+func TestResolveDocumentMapKey_singleField(t *testing.T) {
+	doc := makeDocResult("doc1", map[string]string{"name": "alice"})
+	key, err := resolveDocumentMapKey(doc, []string{"name"}, "_")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if key != "alice" {
+		t.Errorf("expected key \"alice\", got %q", key)
+	}
+}
+
+// TestResolveDocumentMapKey_compositeKey verifies multi-field map_key concatenation
+// with default separator (failure modes 24-25).
+func TestResolveDocumentMapKey_compositeKey(t *testing.T) {
+	doc := makeDocResult("doc1", map[string]string{"region": "us-east-1", "env": "prod"})
+	key, err := resolveDocumentMapKey(doc, []string{"region", "env"}, "_")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if key != "us-east-1_prod" {
+		t.Errorf("expected key \"us-east-1_prod\", got %q", key)
+	}
+}
+
+// TestResolveDocumentMapKey_customSeparator verifies composite key with custom separator.
+func TestResolveDocumentMapKey_customSeparator(t *testing.T) {
+	doc := makeDocResult("doc1", map[string]string{"region": "us-east-1", "env": "prod"})
+	key, err := resolveDocumentMapKey(doc, []string{"region", "env"}, "-")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if key != "us-east-1-prod" {
+		t.Errorf("expected key \"us-east-1-prod\", got %q", key)
+	}
+}
+
+// TestResolveDocumentMapKey_missingField verifies error when a composite key field
+// is absent from the document (failure mode 24).
+func TestResolveDocumentMapKey_missingField(t *testing.T) {
+	doc := makeDocResult("doc1", map[string]string{"region": "us-east-1"})
+	_, err := resolveDocumentMapKey(doc, []string{"region", "env"}, "_")
+	if err == nil {
+		t.Fatal("expected error for missing field, got nil")
+	}
+	if !strings.Contains(err.Error(), "env") {
+		t.Errorf("error should mention missing field \"env\", got: %v", err)
+	}
+}
+
+// TestResolveDocumentMapKey_emptyFieldValue verifies error when a composite key field
+// has an empty value (failure mode 25).
+func TestResolveDocumentMapKey_emptyFieldValue(t *testing.T) {
+	doc := makeDocResult("doc1", map[string]string{"region": "us-east-1", "env": ""})
+	_, err := resolveDocumentMapKey(doc, []string{"region", "env"}, "_")
+	if err == nil {
+		t.Fatal("expected error for empty field value, got nil")
+	}
+	if !strings.Contains(err.Error(), "empty") {
+		t.Errorf("error should mention empty value, got: %v", err)
+	}
+}
+
+// TestResolveDocumentMapKey_noFields falls back to document_id when mapKeyFields is empty.
+func TestResolveDocumentMapKey_noFields(t *testing.T) {
+	doc := makeDocResult("doc1", map[string]string{"name": "alice"})
+	key, err := resolveDocumentMapKey(doc, nil, "_")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if key != "doc1" {
+		t.Errorf("expected key \"doc1\", got %q", key)
+	}
+}
+
+// TestResolveDocumentMapKey_threeFields verifies concatenation with three fields.
+func TestResolveDocumentMapKey_threeFields(t *testing.T) {
+	doc := makeDocResult("doc1", map[string]string{"a": "x", "b": "y", "c": "z"})
+	key, err := resolveDocumentMapKey(doc, []string{"a", "b", "c"}, ":")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if key != "x:y:z" {
+		t.Errorf("expected key \"x:y:z\", got %q", key)
 	}
 }
 
