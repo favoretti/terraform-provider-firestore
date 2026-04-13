@@ -50,7 +50,7 @@ The provider supports two authentication methods:
 terraform {
   required_providers {
     firestore = {
-      source = "registry.terraform.io/favoretti/firestore"
+      source = "favoretti/firestore"
     }
   }
 }

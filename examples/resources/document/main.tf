@@ -1,7 +1,7 @@
 terraform {
   required_providers {
     firestore = {
-      source = "registry.terraform.io/favoretti/firestore"
+      source = "favoretti/firestore"
     }
   }
 }
