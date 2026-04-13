@@ -23,19 +23,26 @@ type DocumentsDataSource struct {
 }
 
 type DocumentsDataSourceModel struct {
-	Project    types.String `tfsdk:"project"`
-	Database   types.String `tfsdk:"database"`
-	Collection types.String `tfsdk:"collection"`
-	Where      types.List   `tfsdk:"where"`
-	OrderBy    types.List   `tfsdk:"order_by"`
-	Limit      types.Int64  `tfsdk:"limit"`
-	Documents  types.List   `tfsdk:"documents"`
+	Project        types.String `tfsdk:"project"`
+	Database       types.String `tfsdk:"database"`
+	Collection     types.String `tfsdk:"collection"`
+	FilterOperator types.String `tfsdk:"filter_operator"`
+	Where          types.List   `tfsdk:"where"`
+	WhereGroup     types.List   `tfsdk:"where_group"`
+	OrderBy        types.List   `tfsdk:"order_by"`
+	Limit          types.Int64  `tfsdk:"limit"`
+	Documents      types.List   `tfsdk:"documents"`
 }
 
 type WhereCondition struct {
 	Field    types.String `tfsdk:"field"`
 	Operator types.String `tfsdk:"operator"`
 	Value    types.String `tfsdk:"value"`
+}
+
+type WhereGroupCondition struct {
+	GroupOperator types.String `tfsdk:"group_operator"`
+	Where         types.List   `tfsdk:"where"`
 }
 
 type OrderByCondition struct {
@@ -73,6 +80,10 @@ func (d *DocumentsDataSource) Schema(ctx context.Context, req datasource.SchemaR
 			"collection": schema.StringAttribute{
 				Description: "The collection path (e.g., 'users' or 'users/123/orders').",
 				Required:    true,
+			},
+			"filter_operator": schema.StringAttribute{
+				Description: "The operator used to combine multiple where conditions. Must be AND or OR. Defaults to AND.",
+				Optional:    true,
 			},
 			"limit": schema.Int64Attribute{
 				Description: "Maximum number of documents to return.",
@@ -119,6 +130,38 @@ func (d *DocumentsDataSource) Schema(ctx context.Context, req datasource.SchemaR
 						"value": schema.StringAttribute{
 							Description: "The value to compare against (JSON encoded).",
 							Required:    true,
+						},
+					},
+				},
+			},
+			"where_group": schema.ListNestedBlock{
+				Description: "A group of filter conditions combined with their own operator. Use this to nest AND/OR logic (e.g., status = active AND (role = admin OR role = editor)).",
+				NestedObject: schema.NestedBlockObject{
+					Attributes: map[string]schema.Attribute{
+						"group_operator": schema.StringAttribute{
+							Description: "The operator used to combine conditions within this group. Must be AND or OR. Defaults to AND.",
+							Optional:    true,
+						},
+					},
+					Blocks: map[string]schema.Block{
+						"where": schema.ListNestedBlock{
+							Description: "Filter conditions within this group.",
+							NestedObject: schema.NestedBlockObject{
+								Attributes: map[string]schema.Attribute{
+									"field": schema.StringAttribute{
+										Description: "The field path to filter on.",
+										Required:    true,
+									},
+									"operator": schema.StringAttribute{
+										Description: "The operator (EQUAL, NOT_EQUAL, LESS_THAN, LESS_THAN_OR_EQUAL, GREATER_THAN, GREATER_THAN_OR_EQUAL, ARRAY_CONTAINS, IN, ARRAY_CONTAINS_ANY, NOT_IN).",
+										Required:    true,
+									},
+									"value": schema.StringAttribute{
+										Description: "The value to compare against (JSON encoded).",
+										Required:    true,
+									},
+								},
+							},
 						},
 					},
 				},
@@ -185,6 +228,28 @@ func (d *DocumentsDataSource) Read(ctx context.Context, req datasource.ReadReque
 		}
 	}
 
+	// Parse where_group conditions
+	var whereGroups []WhereGroupCondition
+	if !data.WhereGroup.IsNull() {
+		resp.Diagnostics.Append(data.WhereGroup.ElementsAs(ctx, &whereGroups, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		// Parse nested where conditions within each group and validate group_operator
+		for gi, group := range whereGroups {
+			if !group.GroupOperator.IsNull() && group.GroupOperator.ValueString() != "" {
+				op := group.GroupOperator.ValueString()
+				if op != "AND" && op != "OR" {
+					resp.Diagnostics.AddError(
+						"Invalid group_operator",
+						fmt.Sprintf("where_group[%d].group_operator must be AND or OR, got: %s", gi, op),
+					)
+					return
+				}
+			}
+		}
+	}
+
 	// Parse order_by conditions
 	var orderByConditions []OrderByCondition
 	if !data.OrderBy.IsNull() {
@@ -194,15 +259,28 @@ func (d *DocumentsDataSource) Read(ctx context.Context, req datasource.ReadReque
 		}
 	}
 
+	// Determine filter operator (default AND)
+	filterOperator := "AND"
+	if !data.FilterOperator.IsNull() && data.FilterOperator.ValueString() != "" {
+		filterOperator = data.FilterOperator.ValueString()
+		if filterOperator != "AND" && filterOperator != "OR" {
+			resp.Diagnostics.AddError(
+				"Invalid filter_operator",
+				fmt.Sprintf("filter_operator must be AND or OR, got: %s", filterOperator),
+			)
+			return
+		}
+	}
+
 	// Build structured query
-	hasFilters := len(whereConditions) > 0 || len(orderByConditions) > 0 || !data.Limit.IsNull()
+	hasFilters := len(whereConditions) > 0 || len(whereGroups) > 0 || len(orderByConditions) > 0 || !data.Limit.IsNull()
 
 	var documents []DocumentResult
 	var diags diag.Diagnostics
 
 	if hasFilters {
 		documents, diags = d.runStructuredQuery(ctx, project, database, data.Collection.ValueString(),
-			whereConditions, orderByConditions, data.Limit)
+			whereConditions, whereGroups, orderByConditions, data.Limit, filterOperator)
 	} else {
 		documents, diags = d.listDocuments(ctx, project, database, data.Collection.ValueString())
 	}
@@ -303,8 +381,25 @@ func (d *DocumentsDataSource) listDocuments(ctx context.Context, project, databa
 	return documents, diags
 }
 
+func buildFieldFilter(cond WhereCondition) map[string]interface{} {
+	var value interface{}
+	if err := json.Unmarshal([]byte(cond.Value.ValueString()), &value); err != nil {
+		value = cond.Value.ValueString()
+	}
+	return map[string]interface{}{
+		"fieldFilter": map[string]interface{}{
+			"field": map[string]interface{}{
+				"fieldPath": cond.Field.ValueString(),
+			},
+			"op":    cond.Operator.ValueString(),
+			"value": convertToFirestoreValue(value),
+		},
+	}
+}
+
 func (d *DocumentsDataSource) runStructuredQuery(ctx context.Context, project, database, collection string,
-	whereConditions []WhereCondition, orderByConditions []OrderByCondition, limit types.Int64) ([]DocumentResult, diag.Diagnostics) {
+	whereConditions []WhereCondition, whereGroups []WhereGroupCondition, orderByConditions []OrderByCondition,
+	limit types.Int64, filterOperator string) ([]DocumentResult, diag.Diagnostics) {
 
 	var diags diag.Diagnostics
 
@@ -318,46 +413,49 @@ func (d *DocumentsDataSource) runStructuredQuery(ctx context.Context, project, d
 		},
 	}
 
-	// Add where filters
-	if len(whereConditions) > 0 {
-		if len(whereConditions) == 1 {
-			cond := whereConditions[0]
-			var value interface{}
-			if err := json.Unmarshal([]byte(cond.Value.ValueString()), &value); err != nil {
-				value = cond.Value.ValueString()
+	// Collect all top-level filters (individual where conditions + where_group composites)
+	var allFilters []interface{}
+
+	for _, cond := range whereConditions {
+		allFilters = append(allFilters, buildFieldFilter(cond))
+	}
+
+	for _, group := range whereGroups {
+		groupOp := "AND"
+		if !group.GroupOperator.IsNull() && group.GroupOperator.ValueString() != "" {
+			groupOp = group.GroupOperator.ValueString()
+		}
+
+		var groupWheres []WhereCondition
+		if !group.Where.IsNull() {
+			group.Where.ElementsAs(ctx, &groupWheres, false)
+		}
+
+		if len(groupWheres) == 1 {
+			allFilters = append(allFilters, buildFieldFilter(groupWheres[0]))
+		} else if len(groupWheres) > 1 {
+			groupFilters := make([]interface{}, len(groupWheres))
+			for i, cond := range groupWheres {
+				groupFilters[i] = buildFieldFilter(cond)
 			}
-			query["where"] = map[string]interface{}{
-				"fieldFilter": map[string]interface{}{
-					"field": map[string]interface{}{
-						"fieldPath": cond.Field.ValueString(),
-					},
-					"op":    cond.Operator.ValueString(),
-					"value": convertToFirestoreValue(value),
-				},
-			}
-		} else {
-			filters := make([]interface{}, len(whereConditions))
-			for i, cond := range whereConditions {
-				var value interface{}
-				if err := json.Unmarshal([]byte(cond.Value.ValueString()), &value); err != nil {
-					value = cond.Value.ValueString()
-				}
-				filters[i] = map[string]interface{}{
-					"fieldFilter": map[string]interface{}{
-						"field": map[string]interface{}{
-							"fieldPath": cond.Field.ValueString(),
-						},
-						"op":    cond.Operator.ValueString(),
-						"value": convertToFirestoreValue(value),
-					},
-				}
-			}
-			query["where"] = map[string]interface{}{
+			allFilters = append(allFilters, map[string]interface{}{
 				"compositeFilter": map[string]interface{}{
-					"op":      "AND",
-					"filters": filters,
+					"op":      groupOp,
+					"filters": groupFilters,
 				},
-			}
+			})
+		}
+	}
+
+	// Build the where clause from collected filters
+	if len(allFilters) == 1 {
+		query["where"] = allFilters[0]
+	} else if len(allFilters) > 1 {
+		query["where"] = map[string]interface{}{
+			"compositeFilter": map[string]interface{}{
+				"op":      filterOperator,
+				"filters": allFilters,
+			},
 		}
 	}
 

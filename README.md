@@ -50,7 +50,7 @@ The provider supports two authentication methods:
 terraform {
   required_providers {
     firestore = {
-      source = "registry.terraform.io/favoretti/firestore"
+      source = "favoretti/firestore"
     }
   }
 }
@@ -118,6 +118,53 @@ data "firestore_documents" "active_users" {
 
   limit = 100
 }
+
+# Query with OR filters
+data "firestore_documents" "admins_or_editors" {
+  collection      = "users"
+  filter_operator = "OR"
+
+  where {
+    field    = "role"
+    operator = "EQUAL"
+    value    = jsonencode("admin")
+  }
+
+  where {
+    field    = "role"
+    operator = "EQUAL"
+    value    = jsonencode("editor")
+  }
+}
+
+# Query with nested AND/OR logic:
+# status = "active" AND (role = "admin" OR role = "editor")
+data "firestore_documents" "active_privileged" {
+  collection      = "users"
+  filter_operator = "AND"
+
+  where {
+    field    = "status"
+    operator = "EQUAL"
+    value    = jsonencode("active")
+  }
+
+  where_group {
+    group_operator = "OR"
+
+    where {
+      field    = "role"
+      operator = "EQUAL"
+      value    = jsonencode("admin")
+    }
+
+    where {
+      field    = "role"
+      operator = "EQUAL"
+      value    = jsonencode("editor")
+    }
+  }
+}
 ```
 
 ## Resources
@@ -177,10 +224,14 @@ Lists documents in a collection with optional filtering.
 #### Arguments
 
 - `collection` (Required) - Collection path
+- `filter_operator` (Optional) - Operator to combine top-level `where` and `where_group` blocks: `AND` (default) or `OR`
 - `where` (Optional) - Filter conditions block
   - `field` - Field path to filter on
   - `operator` - Comparison operator (EQUAL, NOT_EQUAL, LESS_THAN, GREATER_THAN, etc.)
   - `value` - JSON-encoded value to compare
+- `where_group` (Optional) - Grouped filter conditions with their own operator, for nesting AND/OR logic
+  - `group_operator` - Operator to combine conditions within the group: `AND` (default) or `OR`
+  - `where` - Filter conditions within the group (same schema as top-level `where`)
 - `order_by` (Optional) - Ordering block
   - `field` - Field path to order by
   - `direction` - ASCENDING or DESCENDING
