@@ -1,0 +1,114 @@
+name: test
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Run tests with coverage
+        run: go test -v ./... -coverprofile=coverage.out -covermode=atomic 2>&1 | tee test-output.txt
+
+      - name: Display coverage summary
+        run: go tool cover -func=coverage.out
+
+      - name: Generate PR comment
+        if: github.event_name == 'pull_request'
+        run: |
+          # Extract test results
+          TOTAL_TESTS=$(grep -c '^--- PASS\|^--- FAIL' test-output.txt || echo "0")
+          PASSED=$(grep -c '^--- PASS' test-output.txt || echo "0")
+          FAILED=$(grep -c '^--- FAIL' test-output.txt || echo "0")
+
+          # Extract total coverage percentage
+          COVERAGE=$(go tool cover -func=coverage.out | grep '^total:' | awk '{print $NF}')
+
+          # Determine status
+          if [ "$FAILED" -gt 0 ]; then
+            STATUS=":x: Tests Failed"
+          else
+            STATUS=":white_check_mark: Tests Passed"
+          fi
+
+          # Build the comment body
+          {
+            echo "## ${STATUS}"
+            echo ""
+            echo "| Metric | Result |"
+            echo "|--------|--------|"
+            echo "| Total tests | ${TOTAL_TESTS} |"
+            echo "| Passed | ${PASSED} |"
+            echo "| Failed | ${FAILED} |"
+            echo "| Coverage | ${COVERAGE} |"
+            echo ""
+            echo "<details>"
+            echo "<summary>Coverage by function</summary>"
+            echo ""
+            echo '```'
+            go tool cover -func=coverage.out
+            echo '```'
+            echo ""
+            echo "</details>"
+            echo ""
+            echo "<details>"
+            echo "<summary>Test output</summary>"
+            echo ""
+            echo '```'
+            cat test-output.txt
+            echo '```'
+            echo ""
+            echo "</details>"
+          } > pr-comment.md
+
+      - name: Post or update PR comment
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('pr-comment.md', 'utf8');
+            const marker = '<!-- test-coverage-comment -->';
+            const fullBody = marker + '\n' + body;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: fullBody,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: fullBody,
+              });
+            }
